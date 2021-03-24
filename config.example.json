@@ -1,0 +1,121 @@
+{
+    "luma": {
+        "display":"pygame",
+        "height":32,
+        "width":128,
+        "mode":1
+    },
+
+    "smartchime": {
+        
+        "homeassistant": [
+            {
+                "websocket_uri":"",
+                "ssl":true
+            }
+        ],
+        
+        "amoled_display": {
+            "enabled":false
+        },
+
+        "oled": {
+            
+            "ssd1305hackenabled":false,
+
+            "enabled":true,
+            "refreshInterval":15,
+            "framerate":15,
+            "arrangement": [
+                {
+                    "row1": [
+                        {
+                            "y":0,
+                            "iconFont":"fa_solid",
+                            "textFont":"font_small",
+                            "scroll":false,
+                            "columns": [
+                                {
+                                    "1":"clock",
+                                    "4":"motion"
+                                }
+                            ]
+                        }
+                    ],
+                    "row2": [
+                        {
+                            "y":10,
+                            "iconFont":"fa_solid",
+                            "textFont":"font_large",
+                            "scroll":true,
+                            "columns": [
+                                {
+                                    "1":"mqtt"
+                                }
+                            ]
+                        }
+                    ]
+
+                }
+            ],
+            "clock":[
+                {
+                    "enable":true,
+                    "icon":"\uf017",
+                    "dateTimeFormat":"%a %m/%d %-I:%M%p",
+                    "timezone":"America/Los_Angeles"
+                }
+            ],
+            "motion":[
+                {
+                    "enable":true,
+                    "icon":"\uf554",
+                    "entity":"binary_sensor.motion_front_door"
+                }
+            ],
+            "mqtt":[
+                {
+                    "enable":true,
+                    "icon":false,
+                    "topic":"smartchime/message"
+                }
+            ],
+            "fonts": [
+                {
+                    "font_small": [
+                        {
+                        "name":"Dot Matrix Regular.ttf",
+                        "size":9
+                        }
+                    ],
+                    "font_large": [
+                        {
+                        "name":"Dot Matrix Regular.ttf",
+                        "size":24
+                        }
+                    ],
+                    "fa_regular": [
+                        {
+                        "name":"fa-regular-400.ttf",
+                        "size":8
+                        }
+                    ],
+                    "fa_solid": [
+                        {
+                        "name":"fa-solid-900.ttf",
+                        "size":8
+                        }
+                    ]
+                }
+            ]
+        },
+
+        "doorbell": [
+            {
+            "enabled":true,
+            "entity":"binary_sensor.doorbell_front_door",
+            "audioFiles": []
+            }
+        ]
+    }
+}
