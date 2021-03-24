@@ -20,6 +20,7 @@ from scroller import Scroller
 from synchronizer import Synchronizer
 from widgetFactory import WidgetFactory
 from encoder import Encoder
+from stateTracker import StateTracker
 
 logging.basicConfig(
     level=logging.DEBUG,
@@ -52,11 +53,10 @@ def make_font(name, size):
     font_path = str(Path(__file__).resolve().parent.joinpath('fonts', name))
     return ImageFont.truetype(font_path, size)
 
-def mqtt_on_message(client, userdata, message):
-    str(message.payload.decode("utf-8"))
-    next_refresh = datetime.now()
+
 
 try:
+    state_tracker = StateTracker()
     config = load_config()
     oled_config = config['smartchime']['oled']
     mqtt_config = config['smartchime']['mqtt']
@@ -64,11 +64,12 @@ try:
 
     mqtt_widget_text = "Connecting to MQTT"
     mqtt_client = mqtt.Client(socket.getfqdn())
-    mqtt_client.on_message=mqtt_on_message
     mqtt_client.username_pw_set(mqtt_config[0]['username'],mqtt_config[0]['password'])
     mqtt_client.connect(mqtt_config[0]['address'])
     mqtt_client.loop_start()
-    mqtt_client.subscribe(mqtt_config[0]['topic'], qos=1)
+    mqtt_client.on_message=state_tracker.mqtt_on_message
+    mqtt_client.on_connect=state_tracker.mqtt_on_connect
+    mqtt_client.on_subscribe=state_tracker.mqtt_on_subscribe
 
     device = get_device()
     
