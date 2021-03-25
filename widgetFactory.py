@@ -7,13 +7,14 @@ from luma.core.render import canvas
 from PIL import Image, ImageDraw
 
 class WidgetFactory():
-    def __init__(self, device, image_composition, widget, widget_config, icon_font, text_font, mqtt_client=None, hass_client=None):
+    def __init__(self, device, image_composition, widget, widget_config, icon_font, text_font, state_tracker):
         self.device = device
         self.image_composition = image_composition
         self.widget = widget
         self.widget_config = widget_config
         self.icon_font = icon_font
         self.text_font = text_font
+        self.state_tracker = state_tracker
         self.refreshWidget()
         self.renderWidget()
         
@@ -38,7 +39,7 @@ class WidgetFactory():
             self.text = "12:34" # TEMP
         
         if self.widget == "mqtt":
-            self.text = mqtt_widget_text
+            self.text = self.state_tracker.mqtt_message
 
         print(f"[refreshwidget][{self.widget}] icon: {self.icon}, text: {self.text}")
 

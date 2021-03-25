@@ -4,6 +4,7 @@ import time
 import socket
 
 import paho.mqtt.client as mqtt
+import RPi.GPIO as GPIO
 
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -62,17 +63,29 @@ try:
     mqtt_config = config['smartchime']['mqtt']
     fonts_config = oled_config['fonts'][0]
 
-    mqtt_widget_text = "Connecting to MQTT"
+    # set up MQTT client
     mqtt_client = mqtt.Client(socket.getfqdn())
     mqtt_client.username_pw_set(mqtt_config[0]['username'],mqtt_config[0]['password'])
-    mqtt_client.connect(mqtt_config[0]['address'])
-    mqtt_client.loop_start()
-    mqtt_client.on_message=state_tracker.mqtt_on_message
+    mqtt_client.smartchime_topic = mqtt_config[0]['topic']
+    mqtt_client.smartchime_message = "Connecting to MQTT"
     mqtt_client.on_connect=state_tracker.mqtt_on_connect
     mqtt_client.on_subscribe=state_tracker.mqtt_on_subscribe
+    mqtt_client.on_message=state_tracker.mqtt_on_message
+    mqtt_client.connect(mqtt_config[0]['address'])
+    mqtt_client.loop_start()
 
+    # set up OLED display device
     device = get_device()
     
+    # set up front panel controls and initial values
+    GPIO.setmode(GPIO.BCM)
+    renc1 = Encoder(15, 23, 14, state_tracker.renc1_on_rotary, state_tracker.renc1_on_switch)
+    renc2 = Encoder(27, 22, 17, state_tracker.renc2_on_rotary, state_tracker.renc2_on_switch)
+
+    # TODO: volume, audio file index?
+    renc1.value = 100
+    renc2.value = 1
+
     # HACK: temporary workaround for ssd1305 differences
     if oled_config['ssd1305hackenabled']:
         device.command(
@@ -89,8 +102,7 @@ try:
     # row settings that won't change
     num_rows = len(oled_config['arrangement'][0])
     scrollers = []
-    global next_refresh
-    next_refresh = datetime.now() - timedelta(seconds=30)
+
     for row in oled_config['arrangement'][0]:
         vars()[row] = oled_config['arrangement'][0][row]
         # transform font strings to ImageDraw objects
@@ -101,11 +113,11 @@ try:
         time.sleep(0.0125)
         for scroller in scrollers:
             vars()[scroller].tick()
-        if datetime.now() > next_refresh:
+        if datetime.now() > state_tracker.nextRefresh:
+            state_tracker.nextRefresh += timedelta(seconds=oled_config['refreshInterval'])
             for scroller in scrollers:
                 del vars()[scroller]
             scrollers = []
-            next_refresh = datetime.now() + timedelta(seconds=30)
             r = 0
             synchronizer = Synchronizer()
             for row in oled_config['arrangement'][0]:
@@ -116,7 +128,7 @@ try:
                     widget = vars()[row][0]['columns'][0][col]
                     print(f"[main][{row}] column {col}: {widget}")
                 
-                    vars()[widget] = WidgetFactory(device, image_composition, widget, oled_config[widget][0], vars()[row][0]['iconFont'], vars()[row][0]['textFont'])
+                    vars()[widget] = WidgetFactory(device, image_composition, widget, oled_config[widget][0], vars()[row][0]['iconFont'], vars()[row][0]['textFont'], state_tracker)
 
                     if col == "1":
                         vars()[widget].icon_x = 0
@@ -152,7 +164,7 @@ try:
                 if vars()[row][0]['scroll']:
                     widget_scroller = widget + "_scroller"
                     scrollers.append(widget_scroller)
-                    vars()[widget_scroller] = scroller(image_composition,vars()[widget].ci_text,100,synchronizer)
+                    vars()[widget_scroller] = Scroller(image_composition,vars()[widget].ci_text,100,synchronizer)
 
         with canvas(device, background=image_composition()) as draw:
             image_composition.refresh()
