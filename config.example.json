@@ -7,25 +7,24 @@
     },
 
     "smartchime": {
-        
-        "homeassistant": [
-            {
-                "websocket_uri":"",
-                "ssl":true
-            }
-        ],
-        
-        "amoled_display": {
-            "enabled":false
+        "mqtt": {
+            "enabled":true,
+            "address":"mqttHost.local",
+            "username":"mqttUser",
+            "password":"supersecret"
         },
 
-        "oled": {
+        "amoled_display": {
+            "enabled":false,
+            "always_on":false
+        },
+
+        "oled_display": {
             
             "ssd1305hackenabled":false,
 
             "enabled":true,
-            "refreshInterval":15,
-            "framerate":15,
+            "refreshInterval":30,
             "arrangement": [
                 {
                     "row1": [
@@ -50,7 +49,7 @@
                             "scroll":true,
                             "columns": [
                                 {
-                                    "1":"mqtt"
+                                    "1":"message"
                                 }
                             ]
                         }
@@ -60,7 +59,6 @@
             ],
             "clock":[
                 {
-                    "enable":true,
                     "icon":"\uf017",
                     "dateTimeFormat":"%a %m/%d %-I:%M%p",
                     "timezone":"America/Los_Angeles"
@@ -68,14 +66,14 @@
             ],
             "motion":[
                 {
-                    "enable":true,
+                    "enabled":true,
                     "icon":"\uf554",
-                    "entity":"binary_sensor.motion_front_door"
+                    "topic":"smartchime/motion"
                 }
             ],
-            "mqtt":[
+            "message":[
                 {
-                    "enable":true,
+                    "enabled":true,
                     "icon":false,
                     "topic":"smartchime/message"
                 }
@@ -110,12 +108,34 @@
             ]
         },
 
-        "doorbell": [
-            {
+        "doorbell": {
+                "enabled":true,
+                "topic":"smartchime/doorbell",
+                "audioFiles": [
+                    "/home/pi/doorbell.wav"
+                ]
+        },
+
+        "controls": {
             "enabled":true,
-            "entity":"binary_sensor.doorbell_front_door",
-            "audioFiles": []
-            }
-        ]
+            "rotaryEncoder1": [
+                {
+                    "leftPin":15,
+                    "rightPin":23,
+                    "switchPin":14,
+                    "rotaryFunction":"volume",
+                    "switchFunction":"mute"
+                }
+            ],
+            "rotaryEncoder2": [
+                {
+                    "leftPin":27,
+                    "rightPin":22,
+                    "switchPin":17,
+                    "rotaryFunction":"audioFile",
+                    "switchFunction":"amoledToggle"
+                }
+            ]
+        }
     }
 }

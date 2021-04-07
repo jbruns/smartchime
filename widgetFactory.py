@@ -36,10 +36,10 @@ class WidgetFactory():
             self.text = self.localTime.strftime(self.widget_config['dateTimeFormat'])
         
         if self.widget == "motion":
-            self.text = "12:34" # TEMP
+            self.text = self.state_tracker.last_motion
         
-        if self.widget == "mqtt":
-            self.text = self.state_tracker.mqtt_message
+        if self.widget == "message":
+            self.text = self.state_tracker.message
 
         print(f"[refreshwidget][{self.widget}] icon: {self.icon}, text: {self.text}")
 

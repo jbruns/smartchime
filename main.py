@@ -54,124 +54,212 @@ def make_font(name, size):
     font_path = str(Path(__file__).resolve().parent.joinpath('fonts', name))
     return ImageFont.truetype(font_path, size)
 
-
-
 try:
     state_tracker = StateTracker()
+    
     config = load_config()
-    oled_config = config['smartchime']['oled']
+    amoled_config = config['smartchime']['amoled_display']
+    oled_config = config['smartchime']['oled_display']
     mqtt_config = config['smartchime']['mqtt']
+    doorbell_config = config['smartchime']['doorbell']
+    controls_config = config['smartchime']['controls']
     fonts_config = oled_config['fonts'][0]
 
-    # set up MQTT client
-    mqtt_client = mqtt.Client(socket.getfqdn())
-    mqtt_client.username_pw_set(mqtt_config[0]['username'],mqtt_config[0]['password'])
-    mqtt_client.smartchime_topic = mqtt_config[0]['topic']
-    mqtt_client.smartchime_message = "Connecting to MQTT"
-    mqtt_client.on_connect=state_tracker.mqtt_on_connect
-    mqtt_client.on_subscribe=state_tracker.mqtt_on_subscribe
-    mqtt_client.on_message=state_tracker.mqtt_on_message
-    mqtt_client.connect(mqtt_config[0]['address'])
-    mqtt_client.loop_start()
+    # Enable or disable major functions and provide that state to the state tracker.
+    state_tracker.oled_enabled = oled_config['enabled']
+    state_tracker.amoled_enabled = amoled_config['enabled']
+    state_tracker.doorbell_enabled = doorbell_config['enabled']
+    state_tracker.controls_enabled = controls_config['enabled']
+    state_tracker.mqtt_enabled = mqtt_config['enabled']
 
-    # set up OLED display device
-    device = get_device()
+    # Initialize the OLED display.
+    if state_tracker.oled_enabled:
+        print("[main] Initializing OLED display")
+        device = get_device()
+        image_composition = ImageComposition(device)
+
+        state_tracker.oled_default_font = make_font(fonts_config['font_large'][0]['name'],fonts_config['font_large'][0]['size'])
+
+        # HACK: temporary workaround for ssd1305 differences
+        if oled_config['ssd1305hackenabled']:
+            device.command(
+                0xAE, 0x04, 0x10, 0x40, 0x81, 0x80, 0xA1, 0xA6,
+                0xA8, 0x1F, 0xC8, 0xD3, 0x00, 0xD5, 0xF0, 0xd8,
+                0x05, 0xD9, 0xC2, 0xDA, 0x12, 0xDB, 0x08, 0xAF)
+            device._colstart += 4
+            device._colend += 4
+        # END HACK
+
+        # initialize OLED layout
+        # row settings that won't change
+        num_rows = len(oled_config['arrangement'][0])
+        scrollers = []
+
+        for row in oled_config['arrangement'][0]:
+            vars()[row] = oled_config['arrangement'][0][row]
+            # transform font strings to ImageDraw objects
+            vars()[row][0]['iconFont'] = make_font(fonts_config[vars()[row][0]['iconFont']][0]['name'],fonts_config[vars()[row][0]['iconFont']][0]['size'])
+            vars()[row][0]['textFont'] = make_font(fonts_config[vars()[row][0]['textFont']][0]['name'],fonts_config[vars()[row][0]['textFont']][0]['size'])
+
+        # Enable/disable widgets. The clock widget doesn't depend on external data, so to disable it, do not assign it in a column.
+        # On the other hand, if other widgets are disabled, their external data will not be pulled in. Placeholder values will be used instead.
+        state_tracker.oled_widget_motion_enabled = oled_config['motion'][0]['enabled']
+        state_tracker.oled_widget_message_enabled = oled_config['message'][0]['enabled']
+
+    else:
+        device = False
+        image_composition = False
     
-    # set up front panel controls and initial values
-    GPIO.setmode(GPIO.BCM)
-    renc1 = Encoder(15, 23, 14, state_tracker.renc1_on_rotary, state_tracker.renc1_on_switch)
-    renc2 = Encoder(27, 22, 17, state_tracker.renc2_on_rotary, state_tracker.renc2_on_switch)
+    if state_tracker.mqtt_enabled:
+        # set up MQTT client and subscribe to topics/functions that are enabled in config.
+        print("[main] Initializing MQTT connection")
+        mqtt_client = mqtt.Client(socket.getfqdn())
+        mqtt_client.username_pw_set(mqtt_config['username'],mqtt_config['password'])
+        
+        if state_tracker.oled_widget_message_enabled:
+            print("[main] Initializing OLED message widget")
+            mqtt_client.message_topic = oled_config['message'][0]['topic']
+            # initialize the widget with a placeholder value until it is replaced by a real MQTT message.
+            state_tracker.message = "smartchime ready for action!"
+        else:
+            mqtt_client.message_topic = False
+            state_tracker.message = ""
+        
+        if state_tracker.oled_widget_motion_enabled:
+            print("[main] Initializing OLED motion widget")
+            mqtt_client.motion_topic = oled_config['motion'][0]['topic']
+            # initialize the widget with a placeholder value until it is replaced by a real MQTT message.
+            state_tracker.last_motion = "00:00"
+        else:
+            mqtt_client.motion_topic = False
 
-    # TODO: volume, audio file index?
-    renc1.value = 100
-    renc2.value = 1
+        if state_tracker.doorbell_enabled:
+            print("[main] Initializing doorbell")
+            mqtt_client.doorbell_topic = doorbell_config['topic']
+            state_tracker.doorbell_audioFiles = doorbell_config['audioFiles']
+            state_tracker.doorbell_currentAudioFile = 0
+        else:
+            mqtt_client.doorbell_topic = False
+        
+        mqtt_client.on_connect=state_tracker.mqtt_on_connect
+        mqtt_client.on_subscribe=state_tracker.mqtt_on_subscribe
+        mqtt_client.on_message=state_tracker.mqtt_on_message
+        mqtt_client.connect(mqtt_config['address'])
+        mqtt_client.loop_start()
 
-    # HACK: temporary workaround for ssd1305 differences
-    if oled_config['ssd1305hackenabled']:
-        device.command(
-            0xAE, 0x04, 0x10, 0x40, 0x81, 0x80, 0xA1, 0xA6,
-            0xA8, 0x1F, 0xC8, 0xD3, 0x00, 0xD5, 0xF0, 0xd8,
-            0x05, 0xD9, 0xC2, 0xDA, 0x12, 0xDB, 0x08, 0xAF)
-        device._colstart += 4
-        device._colend += 4
-    # END HACK
+    if state_tracker.controls_enabled:
+        # set up front panel controls. initial values will be determined in the encoder object.
+        GPIO.setmode(GPIO.BCM)
+        renc1 = Encoder(
+            controls_config['rotaryEncoder1'][0]['leftPin'], 
+            controls_config['rotaryEncoder1'][0]['rightPin'], 
+            controls_config['rotaryEncoder1'][0]['switchPin'],
+            controls_config['rotaryEncoder1'][0]['rotaryFunction'],
+            controls_config['rotaryEncoder1'][0]['switchFunction'],
+            state_tracker,
+            device)
+        renc2 = Encoder(
+            controls_config['rotaryEncoder2'][0]['leftPin'], 
+            controls_config['rotaryEncoder2'][0]['rightPin'], 
+            controls_config['rotaryEncoder2'][0]['switchPin'], 
+            controls_config['rotaryEncoder2'][0]['rotaryFunction'],
+            controls_config['rotaryEncoder2'][0]['switchFunction'],
+            state_tracker,
+            device)
 
-    image_composition = ImageComposition(device)
+    if state_tracker.amoled_enabled:
+        # TODO: set up AMOLED display
+        pass
 
-    # initialize OLED layout
-    # row settings that won't change
-    num_rows = len(oled_config['arrangement'][0])
-    scrollers = []
 
-    for row in oled_config['arrangement'][0]:
-        vars()[row] = oled_config['arrangement'][0][row]
-        # transform font strings to ImageDraw objects
-        vars()[row][0]['iconFont'] = make_font(fonts_config[vars()[row][0]['iconFont']][0]['name'],fonts_config[vars()[row][0]['iconFont']][0]['size'])
-        vars()[row][0]['textFont'] = make_font(fonts_config[vars()[row][0]['textFont']][0]['name'],fonts_config[vars()[row][0]['textFont']][0]['size'])
-
+    # main loop to keep things running
     while True:
-        time.sleep(0.0125)
-        for scroller in scrollers:
-            vars()[scroller].tick()
-        if datetime.now() > state_tracker.nextRefresh:
-            state_tracker.nextRefresh += timedelta(seconds=oled_config['refreshInterval'])
+        
+        # keep the oled display up-to-date, if it is enabled.
+        if state_tracker.oled_enabled:
+            time.sleep(0.0125)
+            # advance the scrolling widgets.
             for scroller in scrollers:
-                del vars()[scroller]
-            scrollers = []
-            r = 0
-            synchronizer = Synchronizer()
-            for row in oled_config['arrangement'][0]:
-                r += 1
-                row_columns = len(vars()[row][0]['columns'][0])
-                row_y = vars()[row][0]['y']
-                for col in vars()[row][0]['columns'][0]:
-                    widget = vars()[row][0]['columns'][0][col]
-                    print(f"[main][{row}] column {col}: {widget}")
+                vars()[scroller].tick()
+            
+            # Determine whether we need to refresh the content on the OLED display.
+            if datetime.now() > state_tracker.nextRefresh:
+                # Set the next refresh time. If an out-of-band event is triggered (MQTT, controls, ...), this will be reset (again) by the event.
+                state_tracker.nextRefresh = datetime.now() + timedelta(seconds=oled_config['refreshInterval'])
                 
-                    vars()[widget] = WidgetFactory(device, image_composition, widget, oled_config[widget][0], vars()[row][0]['iconFont'], vars()[row][0]['textFont'], state_tracker)
-
-                    if col == "1":
-                        vars()[widget].icon_x = 0
-                    if col == "4":
-                        vars()[widget].icon_x = device.width - vars()[widget].widget_w
+                # clear the active scrolling widgets and reset the synchronizer.
+                for scroller in scrollers:
+                    del vars()[scroller]
+                scrollers = []
+                synchronizer = Synchronizer()
+                
+                # Arrange widgets on the ImageComposition, per the config. This is done one row at a time as follows:
+                #   - set the y-coordinate for the row.
+                #   - for each configured widget, call the WidgetFactory to create the widget content for eventual placement on the ImageComposition.
+                #   - place each widget according to column identifier (1-4):
+                #       - 1: left justified.
+                #       - 4: right justified.
+                #       - columns 2 and 3 make use of a little extra logic: if both exist, split them evenly across the center of the display. if only one is present, center it.
+                #   - position the widgets (icon + text) according to the x/y coordinates that have been determined.
+                #   - refresh the ImageComposition to make the new positions take effect.
+                #   - enable scrolling for widgets that declare as such in their config.
+                r = 0
+                for row in oled_config['arrangement'][0]:
+                    r += 1
+                    row_columns = len(vars()[row][0]['columns'][0])
+                    row_y = vars()[row][0]['y']
+                    for col in vars()[row][0]['columns'][0]:
+                        widget = vars()[row][0]['columns'][0][col]
+                        print(f"[main][{row}] column {col}: {widget}")
                     
-                    if row_columns == 3:
-                        if col == "2":
-                            vars()[widget].icon_x = round(device.width * 0.25)
-                        if col == "3":
-                            vars()[widget].icon_x = round(device.width * 0.75 - vars()[widget].widget_w)
-                    elif col == "2" or col == "3":
-                        vars()[widget].icon_x = round(device.width * 0.5 - vars()[widget].widget_w * 0.5)
-                    
-                    vars()[widget].text_x += vars()[widget].icon_x
-                    
-                    if row_y > 0:
-                        s = (device.height - row_y) / (num_rows - 1)
-                        f = [row_y + s * i for i in range(num_rows)]
-                        r2 = r - 1
-                        vars()[widget].icon_y = round(f[r2] - vars()[widget].icon_h) 
-                        vars()[widget].text_y = round(f[r2] - vars()[widget].text_h)
-                    else:
-                        vars()[widget].icon_y = 0
-                        vars()[widget].text_y = 0
+                        vars()[widget] = WidgetFactory(device, image_composition, widget, oled_config[widget][0], vars()[row][0]['iconFont'], vars()[row][0]['textFont'], state_tracker)
 
-                    print(f"[main][{row}][{widget}] placement: x: {vars()[widget].icon_x} y: {vars()[widget].icon_y}")
-                    vars()[widget].ci_icon.position = (vars()[widget].icon_x, vars()[widget].icon_y)
-                    vars()[widget].ci_text.position = (vars()[widget].text_x, vars()[widget].text_y)
+                        if col == "1":
+                            vars()[widget].icon_x = 0
+                        if col == "4":
+                            vars()[widget].icon_x = device.width - vars()[widget].widget_w
+                        
+                        if row_columns == 3:
+                            if col == "2":
+                                vars()[widget].icon_x = round(device.width * 0.25)
+                            if col == "3":
+                                vars()[widget].icon_x = round(device.width * 0.75 - vars()[widget].widget_w)
+                        elif col == "2" or col == "3":
+                            vars()[widget].icon_x = round(device.width * 0.5 - vars()[widget].widget_w * 0.5)
+                        
+                        vars()[widget].text_x += vars()[widget].icon_x
+                        
+                        if row_y > 0:
+                            s = (device.height - row_y) / (num_rows - 1)
+                            f = [row_y + s * i for i in range(num_rows)]
+                            r2 = r - 1
+                            vars()[widget].icon_y = round(f[r2] - vars()[widget].icon_h) 
+                            vars()[widget].text_y = round(f[r2] - vars()[widget].text_h)
+                            if vars()[widget].icon_h == 0:
+                                vars()[widget].icon_y = vars()[widget].text_y
+                        else:
+                            vars()[widget].icon_y = 0
+                            vars()[widget].text_y = 0
 
+                        print(f"[main][{row}][{widget}] placement: x: {vars()[widget].icon_x} y: {vars()[widget].icon_y}")
+                        vars()[widget].ci_icon.position = (vars()[widget].icon_x, vars()[widget].icon_y)
+                        vars()[widget].ci_text.position = (vars()[widget].text_x, vars()[widget].text_y)
+
+                        image_composition.refresh()
+                    
+                    if vars()[row][0]['scroll']:
+                        widget_scroller = widget + "_scroller"
+                        scrollers.append(widget_scroller)
+                        vars()[widget_scroller] = Scroller(image_composition,vars()[widget].ci_text,100,synchronizer)
+
+                # Draw the ImageComposition to the device, adding dividers between rows.
+                print("[main] Drawing image on OLED device")
+                with canvas(device, background=image_composition()) as draw:
                     image_composition.refresh()
-                
-                if vars()[row][0]['scroll']:
-                    widget_scroller = widget + "_scroller"
-                    scrollers.append(widget_scroller)
-                    vars()[widget_scroller] = Scroller(image_composition,vars()[widget].ci_text,100,synchronizer)
-
-        with canvas(device, background=image_composition()) as draw:
-            image_composition.refresh()
-            for row in oled_config['arrangement'][0]:
-                row_y = vars()[row][0]['y'] - 2
-                if row_y > 0:
-                    draw.line(((0,row_y),(device.width,row_y)),fill="white",width=1)
+                    for row in oled_config['arrangement'][0]:
+                        row_y = vars()[row][0]['y'] - 2
+                        if row_y > 0:
+                            draw.line(((0,row_y),(device.width,row_y)),fill="white",width=1)
 
 except KeyboardInterrupt:
     pass
