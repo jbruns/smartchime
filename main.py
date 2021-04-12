@@ -17,6 +17,8 @@ from luma.core import cmdline, error
 
 from PIL import ImageFont
 
+from vcgencmd import Vcgencmd
+
 from scroller import Scroller
 from synchronizer import Synchronizer
 from widgetFactory import WidgetFactory
@@ -72,6 +74,15 @@ try:
     state_tracker.controls_enabled = controls_config['enabled']
     state_tracker.mqtt_enabled = mqtt_config['enabled']
 
+    # Set up the AMOLED display.
+    if state_tracker.amoled_enabled:
+        print("[main] initializing AMOLED display")
+        state_tracker.amoled_always_on = amoled_config['always_on']
+        state_tracker.amoled_display_id = amoled_config['display_id']
+        state_tracker.amoled = Vcgencmd()
+        if state_tracker.amoled_always_on:
+            state_tracker.amoled.display_power_on(state_tracker.amoled_display_id)
+
     # Initialize the OLED display.
     if state_tracker.oled_enabled:
         print("[main] Initializing OLED display")
@@ -116,7 +127,7 @@ try:
         mqtt_client = mqtt.Client(socket.getfqdn())
         mqtt_client.username_pw_set(mqtt_config['username'],mqtt_config['password'])
         
-        if state_tracker.oled_widget_message_enabled:
+        if state_tracker.oled_enabled and state_tracker.oled_widget_message_enabled:
             print("[main] Initializing OLED message widget")
             mqtt_client.message_topic = oled_config['message'][0]['topic']
             # initialize the widget with a placeholder value until it is replaced by a real MQTT message.
@@ -124,8 +135,9 @@ try:
         else:
             mqtt_client.message_topic = False
             state_tracker.message = ""
+            state_tracker.last_message = ""
         
-        if state_tracker.oled_widget_motion_enabled:
+        if state_tracker.oled_enabled and state_tracker.oled_widget_motion_enabled:
             print("[main] Initializing OLED motion widget")
             mqtt_client.motion_topic = oled_config['motion'][0]['topic']
             # initialize the widget with a placeholder value until it is replaced by a real MQTT message.
@@ -167,17 +179,11 @@ try:
             state_tracker,
             device)
 
-    if state_tracker.amoled_enabled:
-        # TODO: set up AMOLED display
-        pass
-
-
-    # main loop to keep things running
+    # Main loop
     while True:
-        
+        time.sleep(0.0125)
         # keep the oled display up-to-date, if it is enabled.
         if state_tracker.oled_enabled:
-            time.sleep(0.0125)
             # advance the scrolling widgets.
             for scroller in scrollers:
                 vars()[scroller].tick()

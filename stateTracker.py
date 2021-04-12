@@ -45,10 +45,14 @@ class StateTracker():
                 print(f"[mqtt][on_message] Motion detected!")
                 self.last_message = self.message
                 self.message = "Motion detected on doorbell camera!"
+                if self.amoled_enabled:
+                    self.amoled.display_power_on(self.amoled_display_id)
+
             if self.messageParse[0] == "off":
                 print(f"[mqtt][on_message] Motion event cleared")
                 self.message = self.last_message
-            
+                if self.amoled_enabled:
+                    self.amoled.display_power_off(self.amoled_display_id)
             self.last_motion = self.messageParse[1]
         
         if message.topic == self.mqtt_client.doorbell_topic:
@@ -59,7 +63,11 @@ class StateTracker():
                 self.message = "Someone's at the door!"
                 wave_obj = sa.WaveObject.from_wave_file(self.doorbell_audioFiles[self.doorbell_currentAudioFile])
                 play_obj = wave_obj.play()
+                if self.amoled_enabled:
+                    self.amoled.display_power_on(self.amoled_display_id)
             if self.messageParse[0] == "off":
                 # once HA indicates the doorbell ring state has cleared, restore the previous message so that we revert the display
                 print("[mqtt][on_message] Doorbell event cleared")
                 self.message = self.last_message
+                if self.amoled_enabled:
+                    self.amoled.display_power_on(self.amoled_display_id)

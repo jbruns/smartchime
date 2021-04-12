@@ -15,8 +15,9 @@
         },
 
         "amoled_display": {
-            "enabled":false,
-            "always_on":false
+            "enabled":true,
+            "always_on":false,
+            "display_id":2
         },
 
         "oled_display": {

@@ -2,6 +2,7 @@ import RPi.GPIO as GPIO
 import alsaaudio
 import subprocess
 
+from datetime import datetime, timedelta
 from luma.core.render import canvas
 
 class Encoder:
@@ -111,16 +112,18 @@ class Encoder:
         
         if self.rotaryFunction == "audioFile":
             # keep the value within valid range (number of files defined in config).
+            print(f"{len(self.state_tracker.doorbell_audioFiles)} audio files available")
             if self.value < 0:
                 self.value = 0
-            if self.value > len(self.state_tracker.doorbell_audioFiles):
-                self.value = len(self.state_tracker.doorbell_audioFiles)
+            if self.value >= len(self.state_tracker.doorbell_audioFiles):
+                self.value = len(self.state_tracker.doorbell_audioFiles) - 1
             
             self.state_tracker.doorbell_currentAudioFile = self.value
-            self.oled_text = rsplit(self.state_tracker.doorbell_audioFiles[self.state_tracker.doorbell_currentAudioFile])[-1]
-            
+            self.oled_text = self.state_tracker.doorbell_audioFiles[self.state_tracker.doorbell_currentAudioFile].rsplit("/")[-1]
+
         # Display the result of this action on the OLED, if it is enabled.
         if self.state_tracker.oled_enabled and self.oled_text:
+            print(f"[encoder][{self.rotaryFunction}] {self.oled_text}")
             # push the state tracker refresh out so we can temporarily display the result of the controls action.
             self.state_tracker.nextRefresh = datetime.now() + timedelta(seconds=5)
             self.device.clear()
@@ -140,14 +143,17 @@ class Encoder:
             if self.mixer.getmute()[0] == 0:
                 self.mixer.setmute(1)
                 self.oled_text = "MUTE ON"
-            if self.mixer.getmute()[0] == 1:
+            else:
                 self.mixer.setmute(0)
                 self.value = self.mixer.getvolume()[0]
-                self.oled_text = "Volume: " + self.value
+                self.oled_text = "Volume: " + str(self.value)
         
         if self.swFunction == "amoledToggle":
-            # TODO: implement via vcgencmd?
-            pass
+            if self.state_tracker.amoled_enabled:
+                if self.state_tracker.amoled.display_power_state(self.state_tracker.amoled_display_id) == "on":
+                    self.state_tracker.amoled.display_power_off(self.state_tracker.amoled_display_id)
+                else:
+                    self.state_tracker.amoled.display_power_on(self.state_tracker.amoled_display_id)
 
         # Display the result of this action on the OLED, if it is enabled.
         if self.state_tracker.oled_enabled and self.oled_text:
