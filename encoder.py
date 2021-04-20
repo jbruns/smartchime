@@ -93,6 +93,8 @@ class Encoder:
         self.oled_text = False
 
         print(f"[encoder][rotaryAction] triggered {self.rotaryFunction} action, value: {self.value}")
+        # reset the number of cycles that the main thread will run through, before restoring the display.
+        self.state_tracker.controlsLockCycles = 40
 
         if self.rotaryFunction == "volume":
             # check that the master volume is not muted.
@@ -123,9 +125,9 @@ class Encoder:
 
         # Display the result of this action on the OLED, if it is enabled.
         if self.state_tracker.oled_enabled and self.oled_text:
+            # reset the number of cycles that the main thread will run through, before restoring the display.
+            self.state_tracker.controlsLockCycles = 40
             print(f"[encoder][{self.rotaryFunction}] {self.oled_text}")
-            # push the state tracker refresh out so we can temporarily display the result of the controls action.
-            self.state_tracker.nextRefresh = datetime.now() + timedelta(seconds=5)
             self.device.clear()
             with canvas(self.device) as draw:
                 self.text_w, self.text_h = draw.textsize(self.oled_text,self.state_tracker.oled_default_font)
@@ -138,6 +140,9 @@ class Encoder:
         self.oled_text = False
 
         print(f"[encoder][swAction] triggered {self.swFunction} action")
+        
+        # reset the number of cycles that the main thread will run through, before restoring the display.
+        self.state_tracker.controlsLockCycles = 40
 
         if self.swFunction == "mute":
             if self.mixer.getmute()[0] == 0:
@@ -157,11 +162,15 @@ class Encoder:
 
         # Display the result of this action on the OLED, if it is enabled.
         if self.state_tracker.oled_enabled and self.oled_text:
-            # push the state tracker refresh out so we can temporarily display the result of the controls action.
-            self.state_tracker.nextRefresh = datetime.now() + timedelta(seconds=5)
+            # clear the oled display and temporarily use it to show the controls action.            
             self.device.clear()
             with canvas(self.device) as draw:
                 self.text_w, self.text_h = draw.textsize(self.oled_text,self.state_tracker.oled_default_font)
-                self.text_x = 0
+                if self.text_w > self.device.width:
+                    # shrink the text
+                    self.oled_font = self.state_tracker.oled_small_font
+                    self.text_w, self.text_h = draw.textsize(self.oled_text,self.state_tracker.oled_small_font)
+
+                self.text_x = (self.device.width / 2) - self.text_w
                 self.text_y = (self.device.height / 2) - self.text_h
-                draw.text((self.text_x,self.text_y), text=self.oled_text, font=self.state_tracker.oled_default_font, fill="white")
+                draw.text((self.text_x,self.text_y), text=self.oled_text, font=self.oled_font, fill="white")

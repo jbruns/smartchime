@@ -2,6 +2,7 @@ import json
 import logging
 import time
 import socket
+import pytz
 
 import paho.mqtt.client as mqtt
 import RPi.GPIO as GPIO
@@ -90,6 +91,7 @@ try:
         image_composition = ImageComposition(device)
 
         state_tracker.oled_default_font = make_font(fonts_config['font_large'][0]['name'],fonts_config['font_large'][0]['size'])
+        state_tracker.oled_small_font = make_font(fonts_config['font_small'][0]['name'],fonts_config['font_small'][0]['size'])
 
         # HACK: temporary workaround for ssd1305 differences
         if oled_config['ssd1305hackenabled']:
@@ -179,20 +181,24 @@ try:
             state_tracker,
             device)
 
+        state_tracker.controlsLockCycles = 0
+        
     # Main loop
     while True:
         time.sleep(0.0125)
-        # keep the oled display up-to-date, if it is enabled.
-        if state_tracker.oled_enabled:
-            # advance the scrolling widgets.
+        if state_tracker.controls_enabled:
+            if state_tracker.controlsLockCycles > 0:
+                state_tracker.controlsLockCycles += -1
+                state_tracker.must_refresh = True
+
+        # physical controls take precedence over the "normal" widget display, so don't take away the display lock if the controls haven't released it.
+        if state_tracker.oled_enabled and state_tracker.controlsLockCycles == 0:
+            # Advance the scrolling widgets.
             for scroller in scrollers:
                 vars()[scroller].tick()
-            
-            # Determine whether we need to refresh the content on the OLED display.
-            if datetime.now() > state_tracker.nextRefresh:
-                # Set the next refresh time. If an out-of-band event is triggered (MQTT, controls, ...), this will be reset (again) by the event.
-                state_tracker.nextRefresh = datetime.now() + timedelta(seconds=oled_config['refreshInterval'])
                 
+            if state_tracker.must_refresh:
+                state_tracker.must_refresh = False
                 # clear the active scrolling widgets and reset the synchronizer.
                 for scroller in scrollers:
                     del vars()[scroller]
@@ -258,14 +264,20 @@ try:
                         scrollers.append(widget_scroller)
                         vars()[widget_scroller] = Scroller(image_composition,vars()[widget].ci_text,100,synchronizer)
 
-                # Draw the ImageComposition to the device, adding dividers between rows.
-                print("[main] Drawing image on OLED device")
-                with canvas(device, background=image_composition()) as draw:
-                    image_composition.refresh()
-                    for row in oled_config['arrangement'][0]:
-                        row_y = vars()[row][0]['y'] - 2
-                        if row_y > 0:
-                            draw.line(((0,row_y),(device.width,row_y)),fill="white",width=1)
+            # Draw the ImageComposition to the device, adding dividers between rows.
+            with canvas(device, background=image_composition()) as draw:
+                image_composition.refresh()
+                for row in oled_config['arrangement'][0]:
+                    row_y = vars()[row][0]['y'] - 2
+                    if row_y > 0:
+                        draw.line(((0,row_y),(device.width,row_y)),fill="white",width=1)
+        
+            # trigger an update to the clock widget if necessary.        
+            utcTime = datetime.utcnow().replace(tzinfo=pytz.utc)
+            localTime = utcTime.astimezone(pytz.timezone(oled_config['clock'][0]['timezone']))
+            clockTime = localTime.strftime(oled_config['clock'][0]['dateTimeFormat'])
+            if clockTime != clock.text:
+                state_tracker.must_refresh = True
 
 except KeyboardInterrupt:
     pass

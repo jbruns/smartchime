@@ -32,42 +32,56 @@ class StateTracker():
 
     def mqtt_on_message(self,client,userdata,message):
         self.mqtt_client = client
-        self.nextRefresh = datetime.now()
+        self.must_refresh = True
         self.messageParse = str(message.payload.decode("utf-8")).split(",")
         print(f"[mqtt][on_message]: received message from topic {message.topic}: {self.messageParse}")
         if message.topic == self.mqtt_client.message_topic:
-            # update the message display.
+            # 
             self.last_message = str(message.payload.decode("utf-8"))
             self.message = self.last_message
         
         if message.topic == self.mqtt_client.motion_topic:
             if self.messageParse[0] == "on":
+                
+                # check the message lock. if it is not taken, preserve the existing message string and take the lock until the event clears.
+                if not self.messageLock:
+                    self.last_message = self.message
+                    self.messageLock = True
+                
                 print(f"[mqtt][on_message] Motion detected!")
-                self.last_message = self.message
                 self.message = "Motion detected on doorbell camera!"
                 if self.amoled_enabled:
                     self.amoled.display_power_on(self.amoled_display_id)
 
             if self.messageParse[0] == "off":
+                # release the message lock and restore the previous message.
+                self.messageLock = False
                 print(f"[mqtt][on_message] Motion event cleared")
                 self.message = self.last_message
                 if self.amoled_enabled:
                     self.amoled.display_power_off(self.amoled_display_id)
+            
+            # update the last motion timestamp
             self.last_motion = self.messageParse[1]
         
         if message.topic == self.mqtt_client.doorbell_topic:
             if self.messageParse[0] == "on":
                 print(f"[mqtt][on_message] Doorbell ring!")
-                # doorbell ring. preserve the existing message on the display, and play the configured audio file.
-                self.last_message = self.message
+
+                # check the message lock. if it is not taken, preserve the existing message string and take the lock until the event clears.
+                if not self.messageLock:
+                    self.last_message = self.message
+                
                 self.message = "Someone's at the door!"
                 wave_obj = sa.WaveObject.from_wave_file(self.doorbell_audioFiles[self.doorbell_currentAudioFile])
                 play_obj = wave_obj.play()
                 if self.amoled_enabled:
                     self.amoled.display_power_on(self.amoled_display_id)
+            
             if self.messageParse[0] == "off":
                 # once HA indicates the doorbell ring state has cleared, restore the previous message so that we revert the display
+                self.messageLock = False
                 print("[mqtt][on_message] Doorbell event cleared")
                 self.message = self.last_message
                 if self.amoled_enabled:
-                    self.amoled.display_power_on(self.amoled_display_id)
+                    self.amoled.display_power_off(self.amoled_display_id)

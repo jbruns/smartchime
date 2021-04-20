@@ -25,7 +25,6 @@
             "ssd1305hackenabled":false,
 
             "enabled":true,
-            "refreshInterval":30,
             "arrangement": [
                 {
                     "row1": [
