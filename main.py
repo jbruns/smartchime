@@ -188,7 +188,7 @@ try:
         time.sleep(0.0125)
         if state_tracker.controls_enabled:
             if state_tracker.controlsLockCycles > 0:
-                state_tracker.controlsLockCycles += -1
+                state_tracker.controlsLockCycles = state_tracker.controlsLockCycles - 1
                 state_tracker.must_refresh = True
 
         # physical controls take precedence over the "normal" widget display, so don't take away the display lock if the controls haven't released it.

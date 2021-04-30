@@ -71,16 +71,21 @@ class StateTracker():
                 # check the message lock. if it is not taken, preserve the existing message string and take the lock until the event clears.
                 if not self.messageLock:
                     self.last_message = self.message
-                
-                self.message = "Someone's at the door!"
-                wave_obj = sa.WaveObject.from_wave_file(self.doorbell_audioFiles[self.doorbell_currentAudioFile])
-                play_obj = wave_obj.play()
-                if self.amoled_enabled:
-                    self.amoled.display_power_on(self.amoled_display_id)
+                    self.messageLock = True
+
+                # rate limit the doorbell. it's annoying when someone presses the button over and over again.
+                if not self.doorbellLock:
+                    self.doorbellLock = True
+                    self.message = "Someone's at the door!"
+                    wave_obj = sa.WaveObject.from_wave_file(self.doorbell_audioFiles[self.doorbell_currentAudioFile])
+                    play_obj = wave_obj.play()
+                    if self.amoled_enabled:
+                        self.amoled.display_power_on(self.amoled_display_id)
             
             if self.messageParse[0] == "off":
                 # once HA indicates the doorbell ring state has cleared, restore the previous message so that we revert the display
                 self.messageLock = False
+                self.doorbellLock = False
                 print("[mqtt][on_message] Doorbell event cleared")
                 self.message = self.last_message
                 if self.amoled_enabled:
