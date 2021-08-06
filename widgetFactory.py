@@ -1,6 +1,5 @@
-# from pytz import utc, timezone
-import pytz
 from datetime import datetime
+from dateutil import tz
 from luma.core.image_composition import ImageComposition, ComposableImage
 from luma.core.render import canvas
 
@@ -28,15 +27,18 @@ class WidgetFactory():
 
     def refreshWidget(self):
         self.icon = self.widget_config['icon']
+        self.localTime = datetime.now().astimezone(tz.tzlocal())
 
         if self.widget == "clock":
-            self.utcTime = datetime.utcnow().replace(tzinfo=pytz.utc)
-            self.localTime = self.utcTime.astimezone(pytz.timezone(self.widget_config['timezone']))
-
             self.text = self.localTime.strftime(self.widget_config['dateTimeFormat'])
         
         if self.widget == "motion":
-            self.text = self.state_tracker.last_motion
+            # ignore initialization/startup case
+            if self.state_tracker.last_motion != "---":
+                dtLast_motion = datetime.strptime(self.state_tracker.last_motion,"%Y-%m-%dT%H:%M:%S%z").astimezone(tz.tzlocal())
+                self.text = relative_time(self.localTime,dtLast_motion)
+            else:
+                self.text = self.state_tracker.last_motion
         
         if self.widget == "message":
             self.text = self.state_tracker.message
@@ -86,3 +88,31 @@ class WidgetFactory():
         print(f"[renderWidget][{self.widget}] icon x: {self.icon_x}, y: {self.icon_y}, w: {self.icon_w}, h: {self.icon_h}")
         print(f"[renderWidget][{self.widget}] text x: {self.text_x}, y: {self.text_y}, w: {self.text_w}, h: {self.text_h}")
         print(f"[renderWidget][{self.widget}] total width: {self.widget_w}, height: {self.widget_h}")
+
+def relative_time(dtlocal,dtcompare):
+    # given a datetime object, return a simple, human-readable delta in widget-friendly format.
+    def formatn(n, s):
+        return str(int(n)) + s[0:1]
+
+    def qnr(a, b):
+        return a / b, a % b
+
+    class FormatDelta:
+
+        def __init__(self, dtlocal, dtcompare):
+            delta = dtlocal - dtcompare
+            self.day = delta.days
+            self.second = delta.seconds
+            self.year, self.day = qnr(self.day, 365)
+            self.month, self.day = qnr(self.day, 30)
+            self.hour, self.second = qnr(self.second, 3600)
+            self.minute, self.second = qnr(self.second, 60)
+
+        def format(self):
+            for period in ['year', 'month', 'day', 'hour', 'minute', 'second']:
+                n = getattr(self, period)
+                if n >= 1:
+                    return '{0}'.format(formatn(n, period))
+            return "now"
+
+    return FormatDelta(dtlocal,dtcompare).format()

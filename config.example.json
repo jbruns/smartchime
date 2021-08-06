@@ -17,7 +17,8 @@
         "amoled_display": {
             "enabled":true,
             "always_on":false,
-            "display_id":2
+            "display_id":2,
+            "topic":"smartchime/cameraFeed"
         },
 
         "oled_display": {
@@ -60,8 +61,7 @@
             "clock":[
                 {
                     "icon":"\uf017",
-                    "dateTimeFormat":"%a %m/%d %-I:%M%p",
-                    "timezone":"America/Los_Angeles"
+                    "dateTimeFormat":"%a %m/%d %-I:%M%p"
                 }
             ],
             "motion":[
@@ -110,6 +110,7 @@
 
         "doorbell": {
                 "enabled":true,
+                "isBattery":false,
                 "topic":"smartchime/doorbell",
                 "audioFiles": [
                     "/home/pi/doorbell.wav"

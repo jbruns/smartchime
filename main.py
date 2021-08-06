@@ -2,12 +2,12 @@ import json
 import logging
 import time
 import socket
-import pytz
 
 import paho.mqtt.client as mqtt
 import RPi.GPIO as GPIO
 
-from datetime import datetime, timedelta
+from datetime import datetime
+from dateutil import tz
 from pathlib import Path
 
 from luma.core.interface.serial import spi
@@ -143,7 +143,7 @@ try:
             print("[main] Initializing OLED motion widget")
             mqtt_client.motion_topic = oled_config['motion'][0]['topic']
             # initialize the widget with a placeholder value until it is replaced by a real MQTT message.
-            state_tracker.last_motion = "00:00"
+            state_tracker.last_motion = "---"
         else:
             mqtt_client.motion_topic = False
 
@@ -151,9 +151,24 @@ try:
             print("[main] Initializing doorbell")
             mqtt_client.doorbell_topic = doorbell_config['topic']
             state_tracker.doorbell_audioFiles = doorbell_config['audioFiles']
+            state_tracker.doorbell_isBattery = doorbell_config['isBattery']
+            state_tracker.doorbell_cameraPlayerArgs = [
+                '--no-osd',
+                '--no-keys'
+            ]
+            # if the doorbell camera is battery powered, we expect a shorter video that needs to loop.
+            # otherwise, the live stream is expected.
+            if state_tracker.doorbell_isBattery:
+                state_tracker.doorbell_cameraPlayerArgs.append('--loop')
+            else:
+                state_tracker.doorbell_cameraPlayerArgs.append('--live')
             state_tracker.doorbell_currentAudioFile = 0
+
+            if state_tracker.amoled_enabled:
+                mqtt_client.camera_topic = amoled_config['topic']
         else:
             mqtt_client.doorbell_topic = False
+            mqtt_client.camera_topic = False
         
         mqtt_client.on_connect=state_tracker.mqtt_on_connect
         mqtt_client.on_subscribe=state_tracker.mqtt_on_subscribe
@@ -273,8 +288,7 @@ try:
                         draw.line(((0,row_y),(device.width,row_y)),fill="white",width=1)
         
             # trigger an update to the clock widget if necessary.        
-            utcTime = datetime.utcnow().replace(tzinfo=pytz.utc)
-            localTime = utcTime.astimezone(pytz.timezone(oled_config['clock'][0]['timezone']))
+            localTime = datetime.now().astimezone(tz.tzlocal())
             clockTime = localTime.strftime(oled_config['clock'][0]['dateTimeFormat'])
             if clockTime != clock.text:
                 state_tracker.must_refresh = True

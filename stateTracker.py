@@ -1,8 +1,9 @@
 import json
 import simpleaudio as sa
-import alsaaudio
 
 from datetime import datetime
+from omxplayer.player import OMXPlayer
+from pathlib import Path
 
 class StateTracker():
     def __init__(self):
@@ -18,8 +19,10 @@ class StateTracker():
                 self.mqtt_doorbell_topic_subscription = self.mqtt_client.subscribe(self.mqtt_client.doorbell_topic, qos=1)
             if self.mqtt_client.motion_topic:
                 self.mqtt_motion_topic_subscription = self.mqtt_client.subscribe(self.mqtt_client.motion_topic, qos=1)
+            if self.mqtt_client.camera_topic:
+                self.mqtt_camera_topic_subscription = self.mqtt_client.subscribe(self.mqtt_client.camera_topic, qos=1)
         else:
-            print(f"[mqtt][on_connect]: exception connecting to MQTT {connack_string(rc)}")
+            print(f"[mqtt][on_connect]: exception connecting to MQTT {self.mqtt_client.connack_string(rc)}")
 
     def mqtt_on_subscribe(self,client,userdata,mid,granted_qos):
         self.mqtt_client = client
@@ -29,6 +32,8 @@ class StateTracker():
             print(f"[mqtt][on_subscribe]: mid: {mid}, subscribed to {self.mqtt_client.message_topic}")
         if self.mqtt_client.motion_topic and mid == self.mqtt_motion_topic_subscription[1]:
             print(f"[mqtt][on_subscribe]: mid: {mid}, subscribed to {self.mqtt_client.motion_topic}")
+        if self.mqtt_client.camera_topic and mid == self.mqtt_camera_topic_subscription[1]:
+            print(f"[mqtt][on_subscribe]: mid: {mid}, subscribed to {self.mqtt_client.camera_topic}")
 
     def mqtt_on_message(self,client,userdata,message):
         self.mqtt_client = client
@@ -36,7 +41,6 @@ class StateTracker():
         self.messageParse = str(message.payload.decode("utf-8")).split(",")
         print(f"[mqtt][on_message]: received message from topic {message.topic}: {self.messageParse}")
         if message.topic == self.mqtt_client.message_topic:
-            # 
             self.last_message = str(message.payload.decode("utf-8"))
             self.message = self.last_message
         
@@ -50,8 +54,6 @@ class StateTracker():
                 
                 print(f"[mqtt][on_message] Motion detected!")
                 self.message = "Motion detected on doorbell camera!"
-                if self.amoled_enabled:
-                    self.amoled.display_power_on(self.amoled_display_id)
 
             if self.messageParse[0] == "off":
                 # release the message lock and restore the previous message.
@@ -60,6 +62,9 @@ class StateTracker():
                 self.message = self.last_message
                 if self.amoled_enabled:
                     self.amoled.display_power_off(self.amoled_display_id)
+                    if 'self.doorbellCamPlayer' in locals():
+                        if self.doorbellCamPlayer.is_playing():
+                            self.doorbellCamPlayer.quit()
             
             # update the last motion timestamp
             self.last_motion = self.messageParse[1]
@@ -79,8 +84,6 @@ class StateTracker():
                     self.message = "Someone's at the door!"
                     wave_obj = sa.WaveObject.from_wave_file(self.doorbell_audioFiles[self.doorbell_currentAudioFile])
                     play_obj = wave_obj.play()
-                    if self.amoled_enabled:
-                        self.amoled.display_power_on(self.amoled_display_id)
             
             if self.messageParse[0] == "off":
                 # once HA indicates the doorbell ring state has cleared, restore the previous message so that we revert the display
@@ -90,3 +93,15 @@ class StateTracker():
                 self.message = self.last_message
                 if self.amoled_enabled:
                     self.amoled.display_power_off(self.amoled_display_id)
+                    if 'self.doorbellCamPlayer' in locals():
+                        if self.doorbellCamPlayer.is_playing():
+                            self.doorbellCamPlayer.quit()
+        
+        if message.topic == self.mqtt_client.camera_topic:
+            print("[mqtt][on_message] Received new camera video URL")
+            if self.amoled_enabled:
+                if 'self.doorbellCamPlayer' in locals():
+                    if self.doorbellCamPlayer.is_playing():
+                        self.doorbellCamPlayer.quit()
+                self.doorbellCamPlayer = OMXPlayer(self.messageParse[0], args=self.doorbell_cameraPlayerArgs)
+                self.amoled.display_power_on(self.amoled_display_id)

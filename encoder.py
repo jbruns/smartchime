@@ -110,7 +110,7 @@ class Encoder:
                 self.oled_text = "Volume: " + str(self.value)
             
             else: # muted.
-                self.oled_text = "MUTE ON"
+                self.oled_text = "MUTE"
         
         if self.rotaryFunction == "audioFile":
             # keep the value within valid range (number of files defined in config).
@@ -164,6 +164,8 @@ class Encoder:
                 if self.state_tracker.amoled.display_power_state(self.state_tracker.amoled_display_id) == "on":
                     self.state_tracker.amoled.display_power_off(self.state_tracker.amoled_display_id)
                 else:
+                    self.oled_text = "One sec, getting feed..."
+                    
                     self.state_tracker.amoled.display_power_on(self.state_tracker.amoled_display_id)
 
         # Display the result of this action on the OLED, if it is enabled.
