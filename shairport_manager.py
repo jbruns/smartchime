@@ -1,8 +1,8 @@
 import threading
 import time
 import logging
-from shairport_sync_metadata.metadata_reader import MetadataReader
-from shairport_sync_metadata.metadata import Item
+from shairportmetadatareader.shairport import AirplayMetadataReader
+from shairportmetadatareader.item import CoreItem, SsncItem
 
 class ShairportManager:
     def __init__(self, pipe_path, oled_manager=None, show_duration=10):
@@ -42,32 +42,32 @@ class ShairportManager:
             self.display_thread.cancel()
         self.logger.info("Stopped Shairport metadata monitoring")
             
-    def _handle_metadata(self, item: Item):
+    def _handle_metadata(self, item):
         """Process metadata items from Shairport.
         
         Args:
-            item (Item): Metadata item containing type, code, and text"""
-        if not item or not item.type:
+            item: Metadata item from shairport-metadatareader"""
+        if not item:
             return
             
-        if item.type == 'ssnc' and item.code == 'pend':
+        if isinstance(item, SsncItem) and item.code == 'pend':
             self.logger.debug("AirPlay playback ended")
             self.current_track = None
             if self.display_thread and self.display_thread.is_alive():
                 self.display_thread.cancel()
-        elif item.type == 'core':
+        elif isinstance(item, CoreItem):
             if item.code == 'asal':  # Album name
                 self.current_track = self.current_track or {}
-                self.current_track['album'] = item.text
-                self.logger.debug(f"Received album metadata: {item.text}")
+                self.current_track['album'] = item.value
+                self.logger.debug(f"Received album metadata: {item.value}")
             elif item.code == 'asar':  # Artist name
                 self.current_track = self.current_track or {}
-                self.current_track['artist'] = item.text
-                self.logger.debug(f"Received artist metadata: {item.text}")
+                self.current_track['artist'] = item.value
+                self.logger.debug(f"Received artist metadata: {item.value}")
             elif item.code == 'minm':  # Track title
                 self.current_track = self.current_track or {}
-                self.current_track['title'] = item.text
-                self.logger.debug(f"Received title metadata: {item.text}")
+                self.current_track['title'] = item.value
+                self.logger.debug(f"Received title metadata: {item.value}")
                 self._update_display()
                 
     def _update_display(self):
@@ -92,9 +92,9 @@ class ShairportManager:
         Continuously reads and processes metadata while running is True."""
         while self.running:
             try:
-                self.reader = MetadataReader(self.pipe_path)
+                self.reader = AirplayMetadataReader(self.pipe_path)
                 self.logger.debug("Connected to Shairport metadata pipe")
-                for item in self.reader.items():
+                for item in self.reader.start_listening():
                     if not self.running:
                         break
                     self._handle_metadata(item)

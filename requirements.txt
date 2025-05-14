@@ -7,5 +7,5 @@ RPi.GPIO==0.7.1
 PyYAML==6.0.1
 vcgencmd==0.1.1
 pyalsaaudio==0.9.2
-shairport-sync-metadata==0.0.4
+shairportmetadatareader @ git+https://github.com/Schlaubischlump/shairport-metadatareader-python
 fontawesome-free==5.15.4
