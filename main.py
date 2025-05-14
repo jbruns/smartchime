@@ -43,8 +43,8 @@ class SmartchimeSystem:
             self.logger.info("Initializing system components")
             
             self.oled = OLEDManager(
-                self.config['displays']['oled']['i2c_port'],
-                self.config['displays']['oled']['i2c_address']
+                self.config['displays']['oled']['spi_port'],
+                self.config['displays']['oled']['spi_device']
             )
             
             self.audio = AudioManager(
