@@ -1,9 +1,8 @@
 # Smartchime v2.0.0 Requirements
 paho-mqtt==1.6.1
-pygame==2.5.2
 pillow==10.0.0
 luma.oled==3.12.0
-python-vlc==3.0.20000
+python-vlc==3.0.21203
 RPi.GPIO==0.7.1
 PyYAML==6.0.1
 vcgencmd==0.1.1
