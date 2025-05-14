@@ -11,7 +11,6 @@ from audio_manager import AudioManager
 from hdmi_manager import HDMIManager
 from oled_manager import OLEDManager
 from encoder_manager import EncoderManager
-from shairport_manager import ShairportManager
 
 __version__ = "2.0.0"
 
@@ -56,13 +55,7 @@ class SmartchimeSystem:
             )
             
             self.hdmi = HDMIManager(self.config['displays']['hdmi']['framebuffer'])
-            
-            self.shairport = ShairportManager(
-                self.config['shairport']['metadata_pipe'],
-                oled_manager=self.oled,
-                show_duration=self.config['shairport']['show_duration']
-            )
-            
+                 
             self.encoders = EncoderManager(
                 volume_pins=(
                     self.config['gpio']['volume_encoder']['clk'],
@@ -304,7 +297,6 @@ class SmartchimeSystem:
         """Main system loop.
         
         - Connects to MQTT broker
-        - Starts Shairport metadata monitoring
         - Updates OLED display continuously
         - Handles cleanup on shutdown
         
@@ -325,10 +317,7 @@ class SmartchimeSystem:
                 60
             )
             self.mqtt_client.loop_start()
-            
-            # Start Shairport metadata monitoring
-            self.shairport.start()
-            
+                       
             self.logger.info("System running")
             while True:
                 self.oled.update_display()
@@ -348,7 +337,6 @@ class SmartchimeSystem:
         - Stops MQTT client
         - Cleans up GPIO resources
         - Turns off HDMI display
-        - Stops audio and Shairport systems
         - Cleans up OLED display"""
         self.logger.info("Cleaning up system resources")
         self.mqtt_client.loop_stop()
@@ -356,7 +344,6 @@ class SmartchimeSystem:
         self.encoders.cleanup()
         self.hdmi.turn_off_display()
         self.audio.cleanup()
-        self.shairport.stop()
         self.oled.cleanup()
         self.logger.info("Cleanup complete")
 
