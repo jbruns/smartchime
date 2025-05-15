@@ -65,6 +65,7 @@ class OLEDManager:
         self.last_content_update_time = 0
         self.status_bar_update_required = True
         self.content_update_required = True
+        self._content_drawn = False  # Track whether content has been initially drawn
         
         # Load fonts - try Font Awesome first, then fallback fonts
         try:
@@ -102,6 +103,7 @@ class OLEDManager:
         self.current_mode = "centered"
         self.line1 = line1
         self.line2 = line2
+        self._content_drawn = False  # Mark that new content needs to be drawn
         self.content_update_required = True
         
         if duration:
@@ -119,6 +121,7 @@ class OLEDManager:
         self.scroll_position = 0
         self.scroll_start_time = None
         self.scroll_paused = True
+        self._content_drawn = False  # Mark that new content needs to be drawn
         self.content_update_required = True
         
         if duration:
@@ -146,6 +149,7 @@ class OLEDManager:
         self.current_message = ""
         self.line1 = ""
         self.line2 = ""
+        self._content_drawn = False
         self.content_update_required = True
         self._cancel_temporary_message()
         
@@ -185,6 +189,7 @@ class OLEDManager:
             self.current_message = self.temporary_message['message']
             self.line1 = self.temporary_message['line1']
             self.line2 = self.temporary_message['line2']
+            self._content_drawn = False  # Mark that restored content needs to be drawn
             self.content_update_required = True
             self.temporary_message = None
             
@@ -326,10 +331,16 @@ class OLEDManager:
         if current_minute != self.last_minute:
             self.status_bar_update_required = True
             self.last_minute = current_minute
+            
+        # Initial drawing of content if mode is set but content hasn't been drawn yet
+        # This ensures that both centered and scrolling text are shown immediately
+        if self.current_mode in ["centered", "scrolling"] and not hasattr(self, "_content_drawn") or not self._content_drawn:
+            self.content_update_required = True
+            self._content_drawn = True
         
         # For scrolling text, update content frequently but only when needed
-        if self.current_mode == "scrolling" and not self.scroll_paused:
-            # If actively scrolling, mark content for update
+        elif self.current_mode == "scrolling":
+            # Update content when scrolling is active or just starting/paused
             self.content_update_required = True
         
         # Perform status bar updates if needed
