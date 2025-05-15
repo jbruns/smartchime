@@ -91,15 +91,3 @@ gpio:
     clk: 27  # Clock signal pin
     dt: 22   # Data signal pin
     sw: 17   # Switch/button pin
-
-# Shairport Sync AirPlay Configuration
-shairport:
-  # Path to Shairport Sync metadata pipe
-  # Default: /tmp/shairport-sync-metadata
-  # Must match Shairport Sync configuration
-  metadata_pipe: /tmp/shairport-sync-metadata
-
-  # Duration in seconds to show track information
-  # Default: 10
-  # Set to 0 to disable automatic hiding
-  show_duration: 10  # How long to show the track info before returning to normal display

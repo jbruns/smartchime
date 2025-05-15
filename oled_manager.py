@@ -5,6 +5,7 @@ from luma.core.interface.serial import spi
 from luma.core.render import canvas
 from luma.oled.device import ssd1306
 from PIL import Image, ImageDraw, ImageFont
+from os import path
 import threading
 
 class OLEDManager:
@@ -60,17 +61,25 @@ class OLEDManager:
         # Load fonts - try Font Awesome first, then fallback fonts
         try:
             self.icon_font = ImageFont.truetype("/usr/share/fonts/fontawesome/fa-solid-900.ttf", 8)
-            self.text_font = ImageFont.truetype("./fonts/Dot Matrix Regular.ttf", 8)
+            self.project_dir = path.dirname(path.abspath(__file__))
+            self.text_font_path = path.join(self.project_dir, "fonts", "Dot Matrix Regular.ttf")
+            self.status_font = ImageFont.truetype(self.text_font_path, 9)  # For clock and motion status
+            self.scroll_font = ImageFont.truetype(self.text_font_path, 20)  # For scrolling messages
+            self.text_font = ImageFont.truetype(self.text_font_path, 11)  # Default text font for other purposes
             self.logger.info("Loaded Font Awesome and Dot Matrix Regular fonts")
         except OSError as e:
             self.logger.warning(f"Could not load preferred fonts, falling back to alternatives: {e}")
             try:
-                self.text_font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 8)
+                self.status_font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 9)
+                self.scroll_font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 20)
+                self.text_font = self.status_font
                 self.icon_font = self.text_font  # Fallback to regular font if FA not available
                 self.logger.info("Loaded DejaVu Sans font as fallback")
             except OSError as e:
                 self.logger.warning(f"Could not load DejaVu Sans font, using default: {e}")
                 self.text_font = ImageFont.load_default()
+                self.status_font = self.text_font
+                self.scroll_font = self.text_font
                 self.icon_font = self.text_font
 
     def show_centered_text(self, line1, line2="", duration=None):
@@ -257,7 +266,7 @@ class OLEDManager:
                     draw.text((x2, y2), truncated_line2, font=self.text_font, fill="white")
                     
             elif self.current_mode == "scrolling" and self.current_message:
-                msg_width = draw.textlength(self.current_message, font=self.text_font)
+                msg_width = draw.textlength(self.current_message, font=self.scroll_font)
                 
                 if msg_width > self.device.width:
                     current_time = time.time()
@@ -277,10 +286,10 @@ class OLEDManager:
                         self.scroll_position += 1
                         
                     x_pos = self.device.width - self.scroll_position
-                    draw.text((x_pos, 16), self.current_message, font=self.text_font, fill="white")
+                    draw.text((x_pos, 16), self.current_message, font=self.scroll_font, fill="white")
                 else:
                     x_pos = (self.device.width - msg_width) // 2
-                    draw.text((x_pos, 16), self.current_message, font=self.text_font, fill="white")
+                    draw.text((x_pos, 16), self.current_message, font=self.scroll_font, fill="white")
                     
     def cleanup(self):
         """Clean up resources and cancel any active timers."""
