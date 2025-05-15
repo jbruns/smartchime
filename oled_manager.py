@@ -66,6 +66,7 @@ class OLEDManager:
         self.status_bar_update_required = True
         self.content_update_required = True
         self._content_drawn = False  # Track whether content has been initially drawn
+        self._status_drawn = False   # Track whether status bar has been initially drawn
         
         # Load fonts - try Font Awesome first, then fallback fonts
         try:
@@ -136,10 +137,12 @@ class OLEDManager:
         if motion_active is not None:
             self.motion_active = motion_active
             self.motion_update_required = True
+            self._status_drawn = False  # Mark that status needs to be redrawn
             self.logger.info(f"Motion status changed: {'active' if motion_active else 'inactive'}")
         if motion_time is not None:
             self.last_motion_time = motion_time
             self.motion_update_required = True
+            self._status_drawn = False  # Mark that status needs to be redrawn
             self.logger.debug(f"Motion time updated: {motion_time}")
             
     def clear_display(self):
@@ -150,7 +153,9 @@ class OLEDManager:
         self.line1 = ""
         self.line2 = ""
         self._content_drawn = False
+        self._status_drawn = False  # Ensure status bar is redrawn too
         self.content_update_required = True
+        self.status_bar_update_required = True
         self._cancel_temporary_message()
         
     def _set_temporary_message(self, duration):
@@ -334,7 +339,7 @@ class OLEDManager:
             
         # Initial drawing of content if mode is set but content hasn't been drawn yet
         # This ensures that both centered and scrolling text are shown immediately
-        if self.current_mode in ["centered", "scrolling"] and not hasattr(self, "_content_drawn") or not self._content_drawn:
+        if (self.current_mode in ["centered", "scrolling"]) and (not hasattr(self, "_content_drawn") or not self._content_drawn):
             self.content_update_required = True
             self._content_drawn = True
         
@@ -342,32 +347,47 @@ class OLEDManager:
         elif self.current_mode == "scrolling":
             # Update content when scrolling is active or just starting/paused
             self.content_update_required = True
+            
+        # Make sure status bar is always drawn initially
+        if not hasattr(self, "_status_drawn") or not self._status_drawn:
+            self.status_bar_update_required = True
+            self._status_drawn = True
         
         # Perform status bar updates if needed
         if self.status_bar_update_required or self.motion_update_required:
-            with canvas(self.device) as draw:
-                # Clear the status bar area only (0-10px height)
-                draw.rectangle((0, 0, self.device.width-1, 9), fill="black")
+            try:
+                with canvas(self.device) as draw:
+                    # Clear the status bar area only (0-10px height)
+                    draw.rectangle((0, 0, self.device.width-1, 9), fill="black")
+                    
+                    # Redraw the status bar
+                    self._update_status_bar(draw)
                 
-                # Redraw the status bar
-                self._update_status_bar(draw)
+                self.status_bar_update_required = False
+                self.motion_update_required = False
                 
-            self.status_bar_update_required = False
-            self.motion_update_required = False
-            
-            # Small delay to avoid display artifacts between updates
-            time.sleep(0.01)
+                # Small delay to avoid display artifacts between updates
+                time.sleep(0.01)
+            except Exception as e:
+                self.logger.error(f"Error updating status bar: {e}")
+                # Reset update flag to try again
+                self._status_drawn = False
             
         # Perform content updates if needed
         if self.content_update_required:
-            with canvas(self.device) as draw:
-                # Clear content area only (10-32px height)
-                draw.rectangle((0, 10, self.device.width-1, self.device.height-1), fill="black")
-                
-                # Update the content area
-                self._update_content_area(draw)
-                
-            self.content_update_required = False
+            try:
+                with canvas(self.device) as draw:
+                    # Clear content area only (10-32px height)
+                    draw.rectangle((0, 10, self.device.width-1, self.device.height-1), fill="black")
+                    
+                    # Update the content area
+                    self._update_content_area(draw)
+                    
+                self.content_update_required = False
+            except Exception as e:
+                self.logger.error(f"Error updating content area: {e}")
+                # Reset update flag to try again
+                self._content_drawn = False
         
     def cleanup(self):
         """Clean up resources and cancel any active timers."""
