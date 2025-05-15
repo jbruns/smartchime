@@ -204,7 +204,8 @@ class OLEDManager:
         Returns:
             tuple: (x, y) coordinates for centered text"""
         text_width = draw.textlength(text, font=self.text_font)
-        text_height = self.text_font.getsize(text)[1]
+        bbox = self.text_font.getbbox(text)
+        text_height = bbox[3] - bbox[1]  # bottom - top
         x = (area_width - text_width) // 2
         y = y_offset + (area_height - text_height) // 2
         return x, y
@@ -229,7 +230,7 @@ class OLEDManager:
         """Update the OLED display. Should be called regularly in the main loop."""
         with canvas(self.device) as draw:
             # Always show status bar at top
-            current_time = datetime.now().strftime("%m/%d %H:%M")
+            current_time = datetime.now().strftime("%a %m/%d %-I:%M%p")
             time_text = f"{self.ICON_CLOCK} {current_time}"
             motion_text = f"{self.ICON_WALKING} {self._format_motion_time()}"
             
