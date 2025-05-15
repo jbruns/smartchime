@@ -40,6 +40,7 @@ class OLEDManager:
         # Display state
         self.current_mode = "default"  # default, centered, scrolling
         self.scroll_position = 0
+        self.previous_scroll_position = 0
         self.scroll_start_time = None
         self.scroll_paused = True
         
@@ -53,10 +54,17 @@ class OLEDManager:
         # Motion state
         self.last_motion_time = None
         self.motion_active = False
+        self.motion_update_required = True
         
         # Display content
         self.line1 = ""
         self.line2 = ""
+        
+        # Update tracking
+        self.last_minute = -1
+        self.last_content_update_time = 0
+        self.status_bar_update_required = True
+        self.content_update_required = True
         
         # Load fonts - try Font Awesome first, then fallback fonts
         try:
@@ -94,6 +102,7 @@ class OLEDManager:
         self.current_mode = "centered"
         self.line1 = line1
         self.line2 = line2
+        self.content_update_required = True
         
         if duration:
             self._set_temporary_message(duration)
@@ -110,6 +119,7 @@ class OLEDManager:
         self.scroll_position = 0
         self.scroll_start_time = None
         self.scroll_paused = True
+        self.content_update_required = True
         
         if duration:
             self._set_temporary_message(duration)
@@ -122,9 +132,11 @@ class OLEDManager:
             motion_time (datetime, optional): Time of last motion detection"""
         if motion_active is not None:
             self.motion_active = motion_active
+            self.motion_update_required = True
             self.logger.info(f"Motion status changed: {'active' if motion_active else 'inactive'}")
         if motion_time is not None:
             self.last_motion_time = motion_time
+            self.motion_update_required = True
             self.logger.debug(f"Motion time updated: {motion_time}")
             
     def clear_display(self):
@@ -134,6 +146,7 @@ class OLEDManager:
         self.current_message = ""
         self.line1 = ""
         self.line2 = ""
+        self.content_update_required = True
         self._cancel_temporary_message()
         
     def _set_temporary_message(self, duration):
@@ -172,6 +185,7 @@ class OLEDManager:
             self.current_message = self.temporary_message['message']
             self.line1 = self.temporary_message['line1']
             self.line2 = self.temporary_message['line2']
+            self.content_update_required = True
             self.temporary_message = None
             
     def _truncate_text(self, text, max_width, draw):
@@ -225,74 +239,125 @@ class OLEDManager:
             return f"{minutes}m"
         hours = minutes // 60
         return f"{hours}h"
+    
+    def _update_status_bar(self, draw):
+        """Draw the status bar with time and motion information.
+        
+        Args:
+            draw: PIL ImageDraw object"""
+        current_time = datetime.now()
+        current_time_str = current_time.strftime("%a %m/%d %-I:%M%p")
+        
+        # Draw time with icon
+        icon_width = draw.textlength(self.ICON_CLOCK, font=self.icon_font)
+        draw.text((0, 0), self.ICON_CLOCK, font=self.icon_font, fill="white")
+        draw.text((icon_width + 2, 0), current_time_str, font=self.status_font, fill="white")
+        
+        # Calculate separator position
+        separator_x = int(self.device.width * 0.75)
+        draw.line([(separator_x, 0), (separator_x, 8)], fill="white", width=1)
+        
+        # Draw motion status with icon
+        motion_icon_width = draw.textlength(self.ICON_WALKING, font=self.icon_font)
+        motion_text = self._format_motion_time()
+        motion_text_width = draw.textlength(motion_text, font=self.status_font)
+        motion_total_width = motion_icon_width + 2 + motion_text_width
+        motion_x = self.device.width - motion_total_width
+        
+        draw.text((motion_x, 0), self.ICON_WALKING, font=self.icon_font, fill="white")
+        draw.text((motion_x + motion_icon_width + 2, 0), motion_text, font=self.status_font, fill="white")
+        
+        # Draw horizontal separator
+        draw.line([(0, 9), (self.device.width-1, 9)], fill="white", width=1)
+        
+    def _update_content_area(self, draw):
+        """Draw the main content area based on current mode.
+        
+        Args:
+            draw: PIL ImageDraw object"""
+        if self.current_mode == "centered":
+            if self.line1:
+                truncated_line1 = self._truncate_text(self.line1, self.device.width, draw)
+                x1, y1 = self._center_text(truncated_line1, draw, self.device.width, 12, 10)
+                draw.text((x1, y1), truncated_line1, font=self.text_font, fill="white")
+            
+            if self.line2:
+                truncated_line2 = self._truncate_text(self.line2, self.device.width, draw)
+                x2, y2 = self._center_text(truncated_line2, draw, self.device.width, 12, 22)
+                draw.text((x2, y2), truncated_line2, font=self.text_font, fill="white")
+                
+        elif self.current_mode == "scrolling" and self.current_message:
+            msg_width = draw.textlength(self.current_message, font=self.scroll_font)
+            
+            if msg_width > self.device.width:
+                current_time = time.time()
+                
+                if self.scroll_start_time is None:
+                    self.scroll_start_time = current_time
+                    
+                if current_time - self.scroll_start_time < 2.0:
+                    x_pos = self.device.width
+                elif self.scroll_paused and current_time - self.scroll_start_time >= 2.0:
+                    self.scroll_paused = False
+                    self.scroll_position = 0
+                elif self.scroll_position >= msg_width and not self.scroll_paused:
+                    self.scroll_paused = True
+                    self.scroll_start_time = current_time
+                elif not self.scroll_paused:
+                    # Check if scroll position changed
+                    if self.previous_scroll_position != self.scroll_position:
+                        self.content_update_required = True
+                    self.previous_scroll_position = self.scroll_position
+                    self.scroll_position += 1
+                    
+                x_pos = self.device.width - self.scroll_position
+                draw.text((x_pos, 16), self.current_message, font=self.scroll_font, fill="white")
+            else:
+                x_pos = (self.device.width - msg_width) // 2
+                draw.text((x_pos, 16), self.current_message, font=self.scroll_font, fill="white")
         
     def update_display(self):
-        """Update the OLED display. Should be called regularly in the main loop."""
-        with canvas(self.device) as draw:
-            # Always show status bar at top
-            current_time = datetime.now().strftime("%a %m/%d %-I:%M%p")
-            time_text = f"{self.ICON_CLOCK} {current_time}"
-            motion_text = f"{self.ICON_WALKING} {self._format_motion_time()}"
-            
-            # Draw time with icon
-            icon_width = draw.textlength(self.ICON_CLOCK, font=self.icon_font)
-            draw.text((0, 0), self.ICON_CLOCK, font=self.icon_font, fill="white")
-            draw.text((icon_width + 2, 0), current_time, font=self.status_font, fill="white")
-            
-            # Calculate separator position
-            separator_x = int(self.device.width * 0.75)
-            draw.line([(separator_x, 0), (separator_x, 8)], fill="white", width=1)
-            
-            # Draw motion status with icon
-            motion_icon_width = draw.textlength(self.ICON_WALKING, font=self.icon_font)
-            motion_text_width = draw.textlength(self._format_motion_time(), font=self.status_font)
-            motion_total_width = motion_icon_width + 2 + motion_text_width
-            motion_x = self.device.width - motion_total_width
-            
-            draw.text((motion_x, 0), self.ICON_WALKING, font=self.icon_font, fill="white")
-            draw.text((motion_x + motion_icon_width + 2, 0), self._format_motion_time(), font=self.status_font, fill="white")
-            
-            # Draw horizontal separator
-            draw.line([(0, 9), (self.device.width-1, 9)], fill="white", width=1)
-            
-            # Draw main content based on current mode
-            if self.current_mode == "centered":
-                if self.line1:
-                    truncated_line1 = self._truncate_text(self.line1, self.device.width, draw)
-                    x1, y1 = self._center_text(truncated_line1, draw, self.device.width, 12, 10)
-                    draw.text((x1, y1), truncated_line1, font=self.text_font, fill="white")
+        """Update the OLED display. Should be called regularly in the main loop.
+        Optimized to only update parts of the display that have changed."""
+        current_time = datetime.now()
+        current_minute = current_time.minute
+        
+        # Check if it's time to update the clock (once per minute)
+        if current_minute != self.last_minute:
+            self.status_bar_update_required = True
+            self.last_minute = current_minute
+        
+        # For scrolling text, update content frequently but only when needed
+        if self.current_mode == "scrolling" and not self.scroll_paused:
+            # If actively scrolling, mark content for update
+            self.content_update_required = True
+        
+        # Perform status bar updates if needed
+        if self.status_bar_update_required or self.motion_update_required:
+            with canvas(self.device) as draw:
+                # Clear the status bar area only (0-10px height)
+                draw.rectangle((0, 0, self.device.width-1, 9), fill="black")
                 
-                if self.line2:
-                    truncated_line2 = self._truncate_text(self.line2, self.device.width, draw)
-                    x2, y2 = self._center_text(truncated_line2, draw, self.device.width, 12, 22)
-                    draw.text((x2, y2), truncated_line2, font=self.text_font, fill="white")
-                    
-            elif self.current_mode == "scrolling" and self.current_message:
-                msg_width = draw.textlength(self.current_message, font=self.scroll_font)
+                # Redraw the status bar
+                self._update_status_bar(draw)
                 
-                if msg_width > self.device.width:
-                    current_time = time.time()
-                    
-                    if self.scroll_start_time is None:
-                        self.scroll_start_time = current_time
-                        
-                    if current_time - self.scroll_start_time < 2.0:
-                        x_pos = self.device.width
-                    elif self.scroll_paused and current_time - self.scroll_start_time >= 2.0:
-                        self.scroll_paused = False
-                        self.scroll_position = 0
-                    elif self.scroll_position >= msg_width and not self.scroll_paused:
-                        self.scroll_paused = True
-                        self.scroll_start_time = current_time
-                    elif not self.scroll_paused:
-                        self.scroll_position += 1
-                        
-                    x_pos = self.device.width - self.scroll_position
-                    draw.text((x_pos, 16), self.current_message, font=self.scroll_font, fill="white")
-                else:
-                    x_pos = (self.device.width - msg_width) // 2
-                    draw.text((x_pos, 16), self.current_message, font=self.scroll_font, fill="white")
-                    
+            self.status_bar_update_required = False
+            self.motion_update_required = False
+            
+            # Small delay to avoid display artifacts between updates
+            time.sleep(0.01)
+            
+        # Perform content updates if needed
+        if self.content_update_required:
+            with canvas(self.device) as draw:
+                # Clear content area only (10-32px height)
+                draw.rectangle((0, 10, self.device.width-1, self.device.height-1), fill="black")
+                
+                # Update the content area
+                self._update_content_area(draw)
+                
+            self.content_update_required = False
+        
     def cleanup(self):
         """Clean up resources and cancel any active timers."""
         self.logger.debug("Cleaning up resources")

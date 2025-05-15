@@ -321,7 +321,7 @@ class SmartchimeSystem:
             self.logger.info("System running")
             while True:
                 self.oled.update_display()
-                time.sleep(0.1)
+                time.sleep(0.0125)
                 
         except KeyboardInterrupt:
             self.logger.info("Received shutdown signal")
