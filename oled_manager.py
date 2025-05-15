@@ -60,9 +60,10 @@ class OLEDManager:
         
         # Load fonts - try Font Awesome first, then fallback fonts
         try:
-            self.icon_font = ImageFont.truetype("/usr/share/fonts/fontawesome/fa-solid-900.ttf", 8)
             self.project_dir = path.dirname(path.abspath(__file__))
+            self.icon_font_path = path.join(self.project_dir, "fonts", "fa-solid-900.ttf")
             self.text_font_path = path.join(self.project_dir, "fonts", "Dot Matrix Regular.ttf")
+            self.icon_font = ImageFont.truetype(self.icon_font_path, 8)
             self.status_font = ImageFont.truetype(self.text_font_path, 9)  # For clock and motion status
             self.scroll_font = ImageFont.truetype(self.text_font_path, 20)  # For scrolling messages
             self.text_font = ImageFont.truetype(self.text_font_path, 11)  # Default text font for other purposes
@@ -235,7 +236,7 @@ class OLEDManager:
             # Draw time with icon
             icon_width = draw.textlength(self.ICON_CLOCK, font=self.icon_font)
             draw.text((0, 0), self.ICON_CLOCK, font=self.icon_font, fill="white")
-            draw.text((icon_width + 2, 0), current_time, font=self.text_font, fill="white")
+            draw.text((icon_width + 2, 0), current_time, font=self.status_font, fill="white")
             
             # Calculate separator position
             separator_x = int(self.device.width * 0.75)
@@ -243,12 +244,12 @@ class OLEDManager:
             
             # Draw motion status with icon
             motion_icon_width = draw.textlength(self.ICON_WALKING, font=self.icon_font)
-            motion_text_width = draw.textlength(self._format_motion_time(), font=self.text_font)
+            motion_text_width = draw.textlength(self._format_motion_time(), font=self.status_font)
             motion_total_width = motion_icon_width + 2 + motion_text_width
             motion_x = self.device.width - motion_total_width
             
             draw.text((motion_x, 0), self.ICON_WALKING, font=self.icon_font, fill="white")
-            draw.text((motion_x + motion_icon_width + 2, 0), self._format_motion_time(), font=self.text_font, fill="white")
+            draw.text((motion_x + motion_icon_width + 2, 0), self._format_motion_time(), font=self.status_font, fill="white")
             
             # Draw horizontal separator
             draw.line([(0, 9), (self.device.width-1, 9)], fill="white", width=1)
