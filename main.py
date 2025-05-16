@@ -238,7 +238,7 @@ class SmartchimeSystem:
             
             # MOTION
             if topic == self.config['mqtt']['topics']['motion']:
-                self.oled.update_motion_status(active=payload['active'], motion_time=event_time)
+                self.oled.update_motion_status(active=payload['active'], last_time=event_time)
                 if payload['active']:
                     self.oled.set_temporary_message("Person detected on doorbell camera!")
                 else:

@@ -32,6 +32,11 @@ class OLEDManager:
         try:
             serial = spi(port=spi_port, device=spi_device)
             self.device = ssd1306(serial, width=128, height=32)
+            # We're actually using an ssd1305-based display, so we need to accomodate the differences.
+            # https://github.com/rm-hull/luma.oled/issues/309#issuecomment-2559715206
+            self.device.command(0xDA, 0x12) # Use alternate COM pin configuration
+            self.device._colstart += 4
+            self.device._colend += 4
             self.logger.info(f"Initialized OLED display on SPI port {spi_port}, device {spi_device}")
         except Exception as e:
             self.logger.error(f"Failed to initialize OLED display: {e}")
