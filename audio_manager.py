@@ -6,11 +6,11 @@ import logging
 from pathlib import Path
 
 class AudioManager:
-    def __init__(self, audio_dir, mixer_device='Digital', mixer_control='PCM', oled_manager=None):
+    def __init__(self, audio_dir, mixer_device='0', mixer_control='Digital', oled_manager=None):
         """Initialize the audio manager with ALSA mixer and sound directory."""
         self.logger = logging.getLogger(__name__)
         self.audio_dir = Path(audio_dir)
-        self.oled_manager = oled_manager
+        self.oled = oled_manager
         self.volume_display_thread = None
         self.previous_message = ""
         
@@ -55,10 +55,10 @@ class AudioManager:
             
     def _display_volume_temporarily(self, message):
         """Show volume information on the OLED display."""
-        if not self.oled_manager:
+        if not self.oled:
             return
-        self.oled_manager.show_centered_text("Volume Control", message, duration=5.0)
-            
+        self.oled.set_mode("centered_2line", "Volume:", f"{self.current_volume}%", duration=5)
+                   
     def adjust_volume(self, delta):
         """Adjust the system volume by a relative amount."""
         if self.is_muted:

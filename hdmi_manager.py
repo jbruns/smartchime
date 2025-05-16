@@ -18,7 +18,7 @@ class HDMIManager:
         """Enable the HDMI display using vcgencmd."""
         if not self.is_display_on:
             try:
-                self.vcgencmd.display_power(1)
+                self.vcgencmd.display_power_on(2)
                 self.is_display_on = True
                 time.sleep(1)  # Wait for display to initialize
                 self.logger.info("HDMI display enabled")
@@ -31,7 +31,7 @@ class HDMIManager:
             if self.player:
                 self.stop_video()
             try:
-                self.vcgencmd.display_power(0)
+                self.vcgencmd.display_power_off(2)
                 self.logger.info("HDMI display disabled")
             except Exception as e:
                 self.logger.error(f"Failed to disable HDMI display: {e}")

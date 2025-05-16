@@ -132,7 +132,7 @@ class SmartchimeSystem:
         self.selected_sound_index = (self.selected_sound_index + 1) % len(self.available_sounds)
         filename = self.available_sounds[self.selected_sound_index]
         self.logger.info(f"Selected sound: {filename}")
-        self.oled.show_centered_text("Select Sound", filename, duration=5.0)
+        self.oled.set_mode("centered_2line", "Select sound:", filename, duration=5)
             
     def prev_sound(self):
         """Select the previous available doorbell sound in the list.
@@ -145,7 +145,7 @@ class SmartchimeSystem:
         self.selected_sound_index = (self.selected_sound_index - 1) % len(self.available_sounds)
         filename = self.available_sounds[self.selected_sound_index]
         self.logger.info(f"Selected sound: {filename}")
-        self.oled.show_centered_text("Select Sound", filename, duration=5.0)
+        self.oled.set_mode("centered_2line", "Select sound:", filename, duration=5)
             
     def play_selected_sound(self):
         """Play the currently selected doorbell sound.
@@ -235,26 +235,24 @@ class SmartchimeSystem:
                 return
                 
             self.logger.info(f"Event message: topic={topic}, active={payload['active']}, time={event_time}")
-                
-            if topic == self.config['mqtt']['topics']['motion']:
-                self.oled.show_status(motion_active=payload['active'], motion_time=event_time)
-                if payload['active']:
-                    self.oled.show_scrolling_text("Motion detected on doorbell camera!")
-                else:
-                    self.oled.clear_display()
-            else:  # Doorbell event
-                if payload['active']:
-                    self.oled.show_scrolling_text("Someone's at the door!")
-                else:
-                    self.oled.clear_display()
             
-            if payload['active']:
-                self.hdmi.turn_on_display()
-                if topic == self.config['mqtt']['topics']['doorbell']:
+            # MOTION
+            if topic == self.config['mqtt']['topics']['motion']:
+                self.oled.update_motion_status(active=payload['active'], motion_time=event_time)
+                if payload['active']:
+                    self.oled.set_temporary_message("Person detected on doorbell camera!")
+                else:
+                    self.oled.clear_temporary_message()
+            
+            # DOORBELL
+            if topic == self.config['mqtt']['topics']['doorbell']:
+                if payload['active']:
+                    self.oled.set_temporary_message("Someone's at the door!")
                     self.audio.play_sound(self.config['audio']['default_sound'])
-                
-                video_url = payload['video_url'] or self.config['video']['default_stream']
-                self.hdmi.play_video(video_url)
+                    video_url = payload['video_url'] or self.config['video']['default_stream']
+                    self.hdmi.play_video(video_url)
+                else:
+                    self.oled.clear_temporary_message()
                 
         except Exception as e:
             self.logger.error(f"Error processing {topic} message: {e}")
@@ -291,7 +289,7 @@ class SmartchimeSystem:
                 If str: Used directly as message"""
         message = payload['text'] if isinstance(payload, dict) and 'text' in payload else str(payload)
         self.logger.info(f"Displaying message: {message}")
-        self.oled.show_scrolling_text(message)
+        self.oled.set_scrolling_message(message)
         
     def run(self):
         """Main system loop.
