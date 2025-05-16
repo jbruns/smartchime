@@ -8,6 +8,7 @@ from luma.core.render import canvas
 from luma.core.image_composition import ImageComposition, ComposableImage
 from luma.oled.device import ssd1306
 from PIL import Image, ImageDraw, ImageFont
+import PIL
 
 class OLEDManager:
     """Manages a 128x32 OLED display with optimized updates and multiple display modes."""
@@ -53,10 +54,12 @@ class OLEDManager:
             self.content_layer = ComposableImage(content_image, position=(0, 10))
             
             # Add layers to composition
-            self.composition.add_image(self.status_layer, id=self.LAYER_STATUS)
-            self.composition.add_image(self.content_layer, id=self.LAYER_CONTENT)
+            self.composition.add_image(self.status_layer)
+            self.composition.add_image(self.content_layer)
             
             self.logger.info(f"Initialized OLED display on SPI port {spi_port}, device {spi_device}")
+            self.logger.info(f"Using PIL/Pillow version: {PIL.__version__}")
+
         except Exception as e:
             self.logger.error(f"Failed to initialize OLED display: {e}")
             raise
@@ -64,13 +67,20 @@ class OLEDManager:
         # Load fonts
         try:
             font_dir = path.join(path.dirname(path.abspath(__file__)), "fonts")
+            self.logger.debug(f"Loading icon font from {path.join(font_dir, 'fa-solid-900.ttf')}")
             self.icon_font = ImageFont.truetype(path.join(font_dir, "fa-solid-900.ttf"), 8)
+            
+            self.logger.debug(f"Loading status font from {path.join(font_dir, 'Dot Matrix Regular.ttf')}")
             self.status_font = ImageFont.truetype(path.join(font_dir, "Dot Matrix Regular.ttf"), 9)
-            self.text_font = ImageFont.truetype(path.join(font_dir, "Dot Matrix Regular.ttf"), 11)
+            
+            self.logger.debug(f"Loading text font from {path.join(font_dir, 'Dot Matrix Regular.ttf')}")
+            self.text_font = ImageFont.truetype(path.join(font_dir, "Dot Matrix Regular.ttf"), 10)
+            
+            self.logger.debug(f"Loading scroll font from {path.join(font_dir, 'Dot Matrix Regular.ttf')}")
             self.scroll_font = ImageFont.truetype(path.join(font_dir, "Dot Matrix Regular.ttf"), 20)
             self.logger.info("Loaded display fonts")
         except Exception as e:
-            self.logger.error(f"Failed to load fonts: {e}")
+            self.logger.error(f"Failed to load fonts: {e}", exc_info=True)
             raise
             
         # Display state
@@ -79,6 +89,7 @@ class OLEDManager:
         self.temp_message = None
         self.original_message = None
         self.temp_timer = None
+        self.mode_timer = None
         self.line1 = ""
         self.line2 = ""
         self.last_motion_time = None
@@ -105,7 +116,7 @@ class OLEDManager:
         """
         if mode not in [self.MODE_DEFAULT, self.MODE_CENTERED]:
             raise ValueError(f"Invalid mode: {mode}")
-            
+
         # Clear any temporary message state
         self._cancel_temp_message()
         
@@ -118,13 +129,12 @@ class OLEDManager:
             self.scroll_start_time = None
             
             if duration:
-                Timer(duration, self._revert_to_default).start()
+                if self.mode_timer:
+                    self.mode_timer.cancel()
+                self.mode_timer = Timer(duration, self._revert_to_default)
+                self.mode_timer.start()
         
-        # Force full display update
-        self._clear_display()
-        # Show status bar if in default mode
-        if mode == self.MODE_DEFAULT:
-            self.status_update_needed = True
+        self.status_update_needed = True
         self.content_update_needed = True
         
     def set_scrolling_message(self, message):
@@ -201,14 +211,14 @@ class OLEDManager:
     def update_display(self):
         """Update the display, optimizing updates by section."""
         current_time = datetime.now()
-        
+
         # Check if clock needs updating (once per minute)
         if self.current_mode == self.MODE_DEFAULT and current_time.minute != self.last_minute:
             self.status_update_needed = True
             self.last_minute = current_time.minute
         
         # Update status bar if needed
-        if self.status_update_needed:
+        if self.current_mode == self.MODE_DEFAULT and self.status_update_needed:
             self._update_status_bar()
             
         # Update content area if needed
@@ -220,53 +230,82 @@ class OLEDManager:
             self._update_scroll_state()
             
     def _clear_display(self):
-        """Clear the entire display."""
-        # Clear both layers
-        status_image = Image.new('1', (self.device.width, 10))
-        content_image = Image.new('1', (self.device.width, 22))
-        
-        self.status_layer.image = status_image
-        self.content_layer.image = content_image
-        self.composition.refresh()
+        with canvas(self.device) as draw:
+            # Clear screen
+            draw.rectangle((0, 0, self.device.width-1, self.device.height-1), outline=0, fill=0)
             
     def _update_status_bar(self):
         """Update the status bar section."""
         try:
+            self.logger.debug("Creating new status bar image")
             # Create new status bar image
             status_image = Image.new('1', (self.device.width, 10))
+            
+            self.logger.debug("Creating ImageDraw object")
             draw = ImageDraw.Draw(status_image)
             
+            self.logger.debug("Preparing to draw time")
             # Draw time
             current_time = datetime.now().strftime("%a %m/%d %-I:%M%p")
-            icon_width = draw.textlength(self.ICON_CLOCK, font=self.icon_font)
+            self.logger.debug(f"Getting icon width for ICON_CLOCK")
+            icon_width = self.icon_font.getlength(self.ICON_CLOCK)
+            
+            self.logger.debug(f"Drawing clock icon at position (0, 0)")
             draw.text((0, 0), self.ICON_CLOCK, font=self.icon_font, fill="white")
+            
+            self.logger.debug(f"Drawing time text at position ({icon_width + 2}, 0)")
             draw.text((icon_width + 2, 0), current_time, font=self.status_font, fill="white")
             
+            self.logger.debug("Drawing separator")
             # Draw separator
             sep_x = int(self.device.width * 0.75)
             draw.line([(sep_x, 0), (sep_x, 8)], fill="white", width=1)
             
+            self.logger.debug("Getting motion text")
             # Draw motion status
             motion_text = self._format_motion_time()
-            motion_icon_width = draw.textlength(self.ICON_WALKING, font=self.icon_font)
-            motion_text_width = draw.textlength(motion_text, font=self.status_font)
+            self.logger.debug(f"Getting icon width for ICON_WALKING")
+            motion_icon_width = self.icon_font.getlength(self.ICON_WALKING)
+            self.logger.debug(f"Getting text width for motion text: '{motion_text}'")
+            motion_text_width = self.status_font.getlength(motion_text)
             motion_x = self.device.width - (motion_icon_width + 2 + motion_text_width)
             
+            self.logger.debug(f"Drawing walking icon at position ({motion_x}, 0)")
             draw.text((motion_x, 0), self.ICON_WALKING, font=self.icon_font, fill="white")
+            
+            self.logger.debug(f"Drawing motion text at position ({motion_x + motion_icon_width + 2}, 0)")
             draw.text((motion_x + motion_icon_width + 2, 0), motion_text, font=self.status_font, fill="white")
             
+            self.logger.debug("Drawing horizontal separator")
             # Draw horizontal separator
             draw.line([(0, 9), (self.device.width-1, 9)], fill="white", width=1)
             
+            self.logger.debug("Updating status layer image")
             # Update status layer
             self.status_layer.image = status_image
-            self.composition.refresh()
+            
+            # Verify all layers have valid images before refreshing
+            for layer in [self.status_layer, self.content_layer]:
+                if hasattr(layer, 'image') and layer.image is not None:
+                    # Image exists, check if it's a valid PIL Image
+                    if not isinstance(layer.image, Image.Image):
+                        # Create a blank image to prevent errors
+                        layer.image = Image.new('1', (self.device.width, layer.height), 0)
+                else:
+                    # Create a blank image if none exists
+                    self.logger.warning(f"Missing image in layer: {layer}")
+                    layer.image = Image.new('1', (self.device.width, layer.height), 0)            
+            
+            self.logger.debug("Calling composition.refresh()")
+            with canvas(self.device, background=self.composition()) as draw:
+                self.composition.refresh()
             
             self.status_update_needed = False
+            self.logger.debug("Status bar update completed successfully")
             
         except Exception as e:
-            self.logger.error(f"Error updating status bar: {e}")
-            
+            self.logger.error(f"Error updating status bar: {e}", exc_info=True)
+
     def _update_content_area(self):
         """Update the main content area."""
         try:
@@ -281,7 +320,8 @@ class OLEDManager:
                 
             # Update content layer
             self.content_layer.image = content_image
-            self.composition.refresh()
+            with canvas(self.device, background=self.composition()) as draw:
+                self.composition.refresh()
             
             self.content_update_needed = False
             
@@ -302,10 +342,10 @@ class OLEDManager:
             
     def _draw_scrolling_text(self, draw):
         """Draw scrolling text."""
-        if not self.current_message:
+        if self.current_mode == self.MODE_CENTERED or not self.current_message:
             return
             
-        msg_width = draw.textlength(self.current_message, font=self.scroll_font)
+        msg_width = self.scroll_font.getlength(self.current_message)
         
         if msg_width <= self.device.width:
             # Center short messages
@@ -318,7 +358,7 @@ class OLEDManager:
         
     def _update_scroll_state(self):
         """Update scrolling text state."""
-        if not self.current_message:
+        if self.current_mode == self.MODE_CENTERED or not self.current_message:
             return
             
         current_time = time.time()
@@ -327,10 +367,8 @@ class OLEDManager:
             self.scroll_start_time = current_time
             return
             
-        # Create temporary image to measure text width
-        temp_image = Image.new('1', (1, 1))
-        draw = ImageDraw.Draw(temp_image)
-        msg_width = draw.textlength(self.current_message, font=self.scroll_font)
+        # Measure text width using font object directly
+        msg_width = self.scroll_font.getlength(self.current_message)
         
         if msg_width <= self.device.width:
             return
@@ -350,16 +388,16 @@ class OLEDManager:
                     
     def _truncate_text(self, text, max_width, draw):
         """Truncate text to fit width, adding ellipsis if needed."""
-        if draw.textlength(text, font=self.text_font) <= max_width:
+        if self.text_font.getlength(text) <= max_width:
             return text
             
-        while len(text) > 3 and draw.textlength(text[:-3] + "...", font=self.text_font) > max_width:
+        while len(text) > 3 and self.text_font.getlength(text[:-3] + "...") > max_width:
             text = text[:-4]
         return text + "..."
         
     def _center_text(self, text, draw, height, y_offset):
         """Calculate position to center text."""
-        text_width = draw.textlength(text, font=self.text_font)
+        text_width = self.text_font.getlength(text)
         bbox = self.text_font.getbbox(text)
         text_height = bbox[3] - bbox[1]
         
@@ -396,7 +434,11 @@ class OLEDManager:
         
     def _revert_to_default(self):
         """Revert to default mode."""
+        if self.mode_timer:
+            self.mode_timer = None
+
         self.set_mode(self.MODE_DEFAULT)
+
         
     def _cancel_temp_message(self):
         """Cancel any active temporary message timer."""

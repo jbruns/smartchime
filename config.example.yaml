@@ -91,3 +91,19 @@ gpio:
     clk: 27  # Clock signal pin
     dt: 22   # Data signal pin
     sw: 17   # Switch/button pin
+    
+# Control Input Throttling Configuration
+controls:
+  # Throttle periods in main loop cycles (~50ms each)
+  throttle:
+    # Volume adjustment throttling
+    volume: 10  # ~500ms between volume changes
+    
+    # Sound selection throttling
+    sound_select: 20  # ~1000ms between sound selections
+    
+    # Toggle actions (mute, display) throttling
+    toggle: 40  # ~2000ms between toggles
+    
+    # Default throttle for unspecified actions
+    default: 20  # ~1000ms

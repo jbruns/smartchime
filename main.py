@@ -1,3 +1,17 @@
+# Apply luma patch before any other imports that might use it
+import logging
+logging.basicConfig(
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    level=logging.DEBUG
+)
+
+try:
+    # Import and apply the patch
+    from luma_patch import apply_luma_patch
+    logging.info("Luma patch imported")
+except Exception as e:
+    logging.error(f"Failed to import luma patch: {e}", exc_info=True)
+
 import os
 import json
 import time
@@ -25,7 +39,7 @@ class SmartchimeSystem:
         # Setup logging with timestamps and levels
         logging.basicConfig(
             format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-            level=logging.INFO
+            level=logging.DEBUG
         )
         self.logger = logging.getLogger(__name__)
         self.logger.info(f"Initializing Smartchime v{__version__}")
@@ -69,6 +83,13 @@ class SmartchimeSystem:
                 )
             )
             
+            # Initialize control throttling
+            self.control_locks = {
+                'volume': 0,
+                'sound_select': 0,
+                'toggle': 0
+            }
+
             # Setup MQTT client with logging callbacks
             self.mqtt_client = mqtt.Client()
             self.mqtt_client.on_connect = self.on_connect
@@ -94,6 +115,10 @@ class SmartchimeSystem:
     def toggle_display(self):
         """Toggle the HDMI display on/off.
         When turning on, automatically starts playing the default video stream."""
+        if self._check_control_throttle('toggle'):
+            self.logger.debug("Display toggle throttled, skipping")
+            return
+            
         if self.hdmi.is_display_on:
             self.logger.info("Turning off HDMI display")
             self.hdmi.turn_off_display()
@@ -109,10 +134,24 @@ class SmartchimeSystem:
         - Volume encoder for audio control (up/down/mute)
         - Sound selection encoder for choosing doorbell sounds and display toggle"""
         self.logger.debug("Setting up encoder callbacks")
+        
+        # Wrapper functions for volume control with throttling
+        def volume_up_throttled():
+            if not self._check_control_throttle('volume'):
+                self.audio.adjust_volume(0.05)
+                
+        def volume_down_throttled():
+            if not self._check_control_throttle('volume'):
+                self.audio.adjust_volume(-0.05)
+                
+        def volume_mute_throttled():
+            if not self._check_control_throttle('toggle'):
+                self.audio.toggle_mute()
+        
         self.encoders.setup_volume_callbacks(
-            volume_up=lambda: self.audio.adjust_volume(0.05),
-            volume_down=lambda: self.audio.adjust_volume(-0.05),
-            volume_mute=self.audio.toggle_mute
+            volume_up=volume_up_throttled,
+            volume_down=volume_down_throttled,
+            volume_mute=volume_mute_throttled
         )
         
         self.encoders.setup_sound_select_callbacks(
@@ -121,10 +160,45 @@ class SmartchimeSystem:
             play_selected=self.toggle_display
         )
         
+    def _check_control_throttle(self, control_type='default'):
+        """Throttle control actions to prevent rapid triggering.
+        
+        Args:
+            control_type (str): Type of control being activated
+                Supported values: 'volume', 'sound_select', 'toggle', 'default'
+                
+        Returns:
+            bool: True if action should be blocked (throttled), False if action can proceed
+        """
+        # If control type is not specifically defined, use default
+        if control_type not in self.control_locks:
+            control_type = 'default'
+            
+        # If this control type is locked, block the action
+        if self.control_locks.get(control_type, 0) > 0:
+            self.logger.debug(f"{control_type} control still locked ({self.control_locks[control_type]} cycles remaining)")
+            return True
+            
+        # Get the throttle period from config, default to 20 cycles
+        throttle_config = self.config.get('controls', {}).get('throttle', {})
+        throttle_period = throttle_config.get(control_type, throttle_config.get('default', 20))
+        
+        # Set the lock period
+        self.control_locks[control_type] = throttle_period
+        self.logger.debug(f"{control_type} control lock engaged for {throttle_period} cycles")
+        
+        # Action can proceed
+        return False
+
     def next_sound(self):
         """Select the next available doorbell sound in the list.
         Shows the selected sound name on the OLED display.
         Does nothing if no sounds are available."""
+        
+        if self._check_control_throttle('sound_select'):
+            self.logger.debug("Sound selection throttled, skipping next sound")
+            return
+
         if not self.available_sounds:
             self.logger.warning("Cannot select next sound: no sounds available")
             return
@@ -138,6 +212,10 @@ class SmartchimeSystem:
         """Select the previous available doorbell sound in the list.
         Shows the selected sound name on the OLED display.
         Does nothing if no sounds are available."""
+        if self._check_control_throttle('sound_select'):
+            self.logger.debug("Sound selection throttled, skipping previous sound")
+            return
+
         if not self.available_sounds:
             self.logger.warning("Cannot select previous sound: no sounds available")
             return
@@ -151,6 +229,10 @@ class SmartchimeSystem:
         """Play the currently selected doorbell sound.
         Also turns on the HDMI display and starts the default video stream.
         Does nothing if no sounds are available."""
+        if self._check_control_throttle('toggle'):
+            self.logger.debug("Sound playback throttled, skipping")
+            return
+            
         if not self.available_sounds:
             self.logger.warning("Cannot play sound: no sounds available")
             return
@@ -301,6 +383,7 @@ class SmartchimeSystem:
         Raises:
             Exception: If connection fails or system encounters fatal error"""
         self.logger.info("Starting doorbell system")
+
         mqtt_username = self.config['mqtt']['username']
         mqtt_password = self.config['mqtt']['password']
         
@@ -319,7 +402,13 @@ class SmartchimeSystem:
             self.logger.info("System running")
             while True:
                 self.oled.update_display()
-                time.sleep(0.0125)
+                # Update all control locks
+                for control_type in self.control_locks:
+                    if self.control_locks[control_type] > 0:
+                        self.control_locks[control_type] -= 1
+                        if self.control_locks[control_type] == 0:
+                            self.logger.debug(f"{control_type} control lock released")
+                time.sleep(0.05)
                 
         except KeyboardInterrupt:
             self.logger.info("Received shutdown signal")

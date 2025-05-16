@@ -21,7 +21,7 @@ class RotaryEncoder:
             # Pull-up is the default for Button class
             self.clk = Button(clk_pin)
             self.dt = Button(dt_pin)
-            self.sw = Button(sw_pin, bounce_time=0.3)
+            self.sw = Button(sw_pin)
             
             self.logger.info(f"Initialized rotary encoder on pins CLK:{clk_pin}, DT:{dt_pin}, SW:{sw_pin}")
         except Exception as e:
