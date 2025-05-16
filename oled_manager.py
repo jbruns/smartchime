@@ -1,6 +1,6 @@
 import time
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 from threading import Timer
 from os import path
 from luma.core.interface.serial import spi
@@ -339,7 +339,7 @@ class OLEDManager:
         if self.last_motion_time is None:
             return "??"
             
-        delta = datetime.now() - self.last_motion_time
+        delta = datetime.now(timezone.utc) - self.last_motion_time
         minutes = int(delta.total_seconds() / 60)
         
         if minutes < 60:
