@@ -103,7 +103,9 @@ class OLEDManager:
         
         # Force full display update
         self._clear_display()
-        self.status_update_needed = True
+        # Show status bar if in default mode
+        if mode == self.MODE_DEFAULT:
+            self.status_update_needed = True
         self.content_update_needed = True
         
     def set_scrolling_message(self, message):
@@ -182,7 +184,7 @@ class OLEDManager:
         current_time = datetime.now()
         
         # Check if clock needs updating (once per minute)
-        if current_time.minute != self.last_minute:
+        if self.current_mode == self.MODE_DEFAULT and current_time.minute != self.last_minute:
             self.status_update_needed = True
             self.last_minute = current_time.minute
         
