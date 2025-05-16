@@ -5,8 +5,9 @@ from threading import Timer
 from os import path
 from luma.core.interface.serial import spi
 from luma.core.render import canvas
+from luma.core.image_composition import ImageComposition, ComposableImage
 from luma.oled.device import ssd1306
-from PIL import ImageDraw, ImageFont
+from PIL import Image, ImageDraw, ImageFont
 
 class OLEDManager:
     """Manages a 128x32 OLED display with optimized updates and multiple display modes."""
@@ -14,6 +15,10 @@ class OLEDManager:
     # Font Awesome icons for status bar
     ICON_CLOCK = "\uf017"      # fa-clock
     ICON_WALKING = "\uf554"    # fa-person-walking
+    
+    # Image composition layer IDs
+    LAYER_STATUS = "status"
+    LAYER_CONTENT = "content"
     
     # Display modes
     MODE_DEFAULT = "default"
@@ -37,6 +42,20 @@ class OLEDManager:
             self.device.command(0xDA, 0x12) # Use alternate COM pin configuration
             self.device._colstart += 4
             self.device._colend += 4
+            # Initialize image composition
+            self.composition = ImageComposition(self.device)
+            
+            # Create status bar and content layers
+            status_image = Image.new('1', (self.device.width, 10))
+            content_image = Image.new('1', (self.device.width, 22))
+            
+            self.status_layer = ComposableImage(status_image, position=(0, 0))
+            self.content_layer = ComposableImage(content_image, position=(0, 10))
+            
+            # Add layers to composition
+            self.composition.add_image(self.status_layer, id=self.LAYER_STATUS)
+            self.composition.add_image(self.content_layer, id=self.LAYER_CONTENT)
+            
             self.logger.info(f"Initialized OLED display on SPI port {spi_port}, device {spi_device}")
         except Exception as e:
             self.logger.error(f"Failed to initialize OLED display: {e}")
@@ -202,38 +221,47 @@ class OLEDManager:
             
     def _clear_display(self):
         """Clear the entire display."""
-        with canvas(self.device) as draw:
-            draw.rectangle((0, 0, self.device.width-1, self.device.height-1), fill="black")
+        # Clear both layers
+        status_image = Image.new('1', (self.device.width, 10))
+        content_image = Image.new('1', (self.device.width, 22))
+        
+        self.status_layer.image = status_image
+        self.content_layer.image = content_image
+        self.composition.refresh()
             
     def _update_status_bar(self):
         """Update the status bar section."""
         try:
-            with canvas(self.device) as draw:
-                # Clear status bar area
-                draw.rectangle((0, 0, self.device.width-1, 9), fill="black")
-                
-                # Draw time
-                current_time = datetime.now().strftime("%a %m/%d %-I:%M%p")
-                icon_width = draw.textlength(self.ICON_CLOCK, font=self.icon_font)
-                draw.text((0, 0), self.ICON_CLOCK, font=self.icon_font, fill="white")
-                draw.text((icon_width + 2, 0), current_time, font=self.status_font, fill="white")
-                
-                # Draw separator
-                sep_x = int(self.device.width * 0.75)
-                draw.line([(sep_x, 0), (sep_x, 8)], fill="white", width=1)
-                
-                # Draw motion status
-                motion_text = self._format_motion_time()
-                motion_icon_width = draw.textlength(self.ICON_WALKING, font=self.icon_font)
-                motion_text_width = draw.textlength(motion_text, font=self.status_font)
-                motion_x = self.device.width - (motion_icon_width + 2 + motion_text_width)
-                
-                draw.text((motion_x, 0), self.ICON_WALKING, font=self.icon_font, fill="white")
-                draw.text((motion_x + motion_icon_width + 2, 0), motion_text, font=self.status_font, fill="white")
-                
-                # Draw horizontal separator
-                draw.line([(0, 9), (self.device.width-1, 9)], fill="white", width=1)
-                
+            # Create new status bar image
+            status_image = Image.new('1', (self.device.width, 10))
+            draw = ImageDraw.Draw(status_image)
+            
+            # Draw time
+            current_time = datetime.now().strftime("%a %m/%d %-I:%M%p")
+            icon_width = draw.textlength(self.ICON_CLOCK, font=self.icon_font)
+            draw.text((0, 0), self.ICON_CLOCK, font=self.icon_font, fill="white")
+            draw.text((icon_width + 2, 0), current_time, font=self.status_font, fill="white")
+            
+            # Draw separator
+            sep_x = int(self.device.width * 0.75)
+            draw.line([(sep_x, 0), (sep_x, 8)], fill="white", width=1)
+            
+            # Draw motion status
+            motion_text = self._format_motion_time()
+            motion_icon_width = draw.textlength(self.ICON_WALKING, font=self.icon_font)
+            motion_text_width = draw.textlength(motion_text, font=self.status_font)
+            motion_x = self.device.width - (motion_icon_width + 2 + motion_text_width)
+            
+            draw.text((motion_x, 0), self.ICON_WALKING, font=self.icon_font, fill="white")
+            draw.text((motion_x + motion_icon_width + 2, 0), motion_text, font=self.status_font, fill="white")
+            
+            # Draw horizontal separator
+            draw.line([(0, 9), (self.device.width-1, 9)], fill="white", width=1)
+            
+            # Update status layer
+            self.status_layer.image = status_image
+            self.composition.refresh()
+            
             self.status_update_needed = False
             
         except Exception as e:
@@ -242,15 +270,19 @@ class OLEDManager:
     def _update_content_area(self):
         """Update the main content area."""
         try:
-            with canvas(self.device) as draw:
-                # Clear content area
-                draw.rectangle((0, 10, self.device.width-1, self.device.height-1), fill="black")
+            # Create new content image
+            content_image = Image.new('1', (self.device.width, 22))
+            draw = ImageDraw.Draw(content_image)
+            
+            if self.current_mode == self.MODE_CENTERED:
+                self._draw_centered_text(draw)
+            elif self.current_mode == self.MODE_DEFAULT and self.current_message:
+                self._draw_scrolling_text(draw)
                 
-                if self.current_mode == self.MODE_CENTERED:
-                    self._draw_centered_text(draw)
-                elif self.current_mode == self.MODE_DEFAULT and self.current_message:
-                    self._draw_scrolling_text(draw)
-                    
+            # Update content layer
+            self.content_layer.image = content_image
+            self.composition.refresh()
+            
             self.content_update_needed = False
             
         except Exception as e:
@@ -260,12 +292,12 @@ class OLEDManager:
         """Draw centered text lines."""
         if self.line1:
             line1 = self._truncate_text(self.line1, self.device.width, draw)
-            x1, y1 = self._center_text(line1, draw, 12, 10)
+            x1, y1 = self._center_text(line1, draw, 12, 0)  # y_offset adjusted for content area
             draw.text((x1, y1), line1, font=self.text_font, fill="white")
             
         if self.line2:
             line2 = self._truncate_text(self.line2, self.device.width, draw)
-            x2, y2 = self._center_text(line2, draw, 12, 22)
+            x2, y2 = self._center_text(line2, draw, 12, 12)  # y_offset adjusted for content area
             draw.text((x2, y2), line2, font=self.text_font, fill="white")
             
     def _draw_scrolling_text(self, draw):
@@ -282,7 +314,7 @@ class OLEDManager:
             # Scroll long messages
             x_pos = self.device.width - self.scroll_position
             
-        draw.text((x_pos, 16), self.current_message, font=self.scroll_font, fill="white")
+        draw.text((x_pos, 6), self.current_message, font=self.scroll_font, fill="white")  # y-position adjusted for content area
         
     def _update_scroll_state(self):
         """Update scrolling text state."""
@@ -295,24 +327,26 @@ class OLEDManager:
             self.scroll_start_time = current_time
             return
             
-        with canvas(self.device) as draw:
-            msg_width = draw.textlength(self.current_message, font=self.scroll_font)
+        # Create temporary image to measure text width
+        temp_image = Image.new('1', (1, 1))
+        draw = ImageDraw.Draw(temp_image)
+        msg_width = draw.textlength(self.current_message, font=self.scroll_font)
+        
+        if msg_width <= self.device.width:
+            return
             
-            if msg_width <= self.device.width:
-                return
-                
-            if self.scroll_paused:
-                if current_time - self.scroll_start_time >= 2.0:
-                    self.scroll_paused = False
-                    self.scroll_position = 0
-                    self.content_update_needed = True
+        if self.scroll_paused:
+            if current_time - self.scroll_start_time >= 2.0:
+                self.scroll_paused = False
+                self.scroll_position = 0
+                self.content_update_needed = True
+        else:
+            if self.scroll_position >= msg_width + self.device.width:
+                self.scroll_paused = True
+                self.scroll_start_time = current_time
             else:
-                if self.scroll_position >= msg_width + self.device.width:
-                    self.scroll_paused = True
-                    self.scroll_start_time = current_time
-                else:
-                    self.scroll_position += 1
-                    self.content_update_needed = True
+                self.scroll_position += 1
+                self.content_update_needed = True
                     
     def _truncate_text(self, text, max_width, draw):
         """Truncate text to fit width, adding ellipsis if needed."""
