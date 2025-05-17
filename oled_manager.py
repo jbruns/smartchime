@@ -354,7 +354,7 @@ class OLEDManager:
             # Scroll long messages
             x_pos = self.device.width - self.scroll_position
             
-        draw.text((x_pos, 6), self.current_message, font=self.scroll_font, fill="white")  # y-position adjusted for content area
+        draw.text((x_pos, 1), self.current_message, font=self.scroll_font, fill="white")  # y-position adjusted for content area
         
     def _update_scroll_state(self):
         """Update scrolling text state."""

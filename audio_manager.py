@@ -54,7 +54,7 @@ class AudioManager:
         except Exception as e:
             self.logger.error(f"Failed to play sound {filename}: {e}")
             
-    def _display_volume_temporarily(self, message):
+    def _display_volume_temporarily(self):
         """Show volume information on the OLED display."""
         if not self.oled:
             return
