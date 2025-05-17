@@ -77,7 +77,7 @@ class OLEDManager:
             self.text_font = ImageFont.truetype(path.join(font_dir, "Dot Matrix Regular.ttf"), 10)
             
             self.logger.debug(f"Loading scroll font from /usr/share/fonts/truetype/dejavu/DejaVuSans.ttf")
-            self.scroll_font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 20)
+            self.scroll_font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 19)
             self.logger.info("Loaded display fonts")
         except Exception as e:
             self.logger.error(f"Failed to load fonts: {e}", exc_info=True)
@@ -354,7 +354,7 @@ class OLEDManager:
             # Scroll long messages
             x_pos = self.device.width - self.scroll_position
             
-        draw.text((x_pos, 1), self.current_message, font=self.scroll_font, fill="white")  # y-position adjusted for content area
+        draw.text((x_pos, 0), self.current_message, font=self.scroll_font, fill="white")
         
     def _update_scroll_state(self):
         """Update scrolling text state."""
