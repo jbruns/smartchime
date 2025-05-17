@@ -33,6 +33,7 @@ class AudioManager:
         
         self.is_muted = False
         self._set_volume(self.current_volume)
+        self.mixer.setmute(0)
         
     def play_sound(self, filename):
         """Play a WAV file using aplay."""
@@ -57,8 +58,11 @@ class AudioManager:
         """Show volume information on the OLED display."""
         if not self.oled:
             return
-        self.oled.set_mode("centered_2line", "Volume:", f"{self.current_volume}%", duration=5)
-                   
+        if self.is_muted:
+            self.oled.set_mode("centered_2line", "Volume:", "MUTE", duration=5)
+        else:
+            self.oled.set_mode("centered_2line", "Volume:", f"{self.current_volume}%", duration=5)
+                       
     def adjust_volume(self, delta):
         """Adjust the system volume by a relative amount."""
         if self.is_muted:
@@ -68,21 +72,19 @@ class AudioManager:
         old_volume = self.current_volume
         new_volume = max(0, min(100, self.current_volume + int(delta * 100)))
         self._set_volume(new_volume)
-        self._display_volume_temporarily(f"Volume: {self.current_volume}%")
+        self._display_volume_temporarily()
         self.logger.info(f"Volume adjusted: {old_volume}% -> {new_volume}%")
         
     def toggle_mute(self):
         """Toggle the audio mute state."""
-        self.is_muted = not self.is_muted
         try:
-            if self.is_muted:
+            if not self.is_muted:
                 self.mixer.setmute(1)
-                self._display_volume_temporarily("Volume: Muted")
                 self.logger.info("Audio muted")
             else:
                 self.mixer.setmute(0)
-                self._display_volume_temporarily(f"Volume: {self.current_volume}%")
                 self.logger.info("Audio unmuted")
+            self._display_volume_temporarily()
         except alsaaudio.ALSAAudioError as e:
             self.logger.error(f"Failed to {('mute' if self.is_muted else 'unmute')} audio: {e}")
         

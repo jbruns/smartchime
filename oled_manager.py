@@ -76,8 +76,8 @@ class OLEDManager:
             self.logger.debug(f"Loading text font from {path.join(font_dir, 'Dot Matrix Regular.ttf')}")
             self.text_font = ImageFont.truetype(path.join(font_dir, "Dot Matrix Regular.ttf"), 10)
             
-            self.logger.debug(f"Loading scroll font from {path.join(font_dir, 'Dot Matrix Regular.ttf')}")
-            self.scroll_font = ImageFont.truetype(path.join(font_dir, "Dot Matrix Regular.ttf"), 20)
+            self.logger.debug(f"Loading scroll font from /usr/share/fonts/truetype/dejavu/DejaVuSans.ttf")
+            self.scroll_font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 20)
             self.logger.info("Loaded display fonts")
         except Exception as e:
             self.logger.error(f"Failed to load fonts: {e}", exc_info=True)

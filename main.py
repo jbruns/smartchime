@@ -124,8 +124,8 @@ class SmartchimeSystem:
             self.hdmi.turn_off_display()
         else:
             self.logger.info("Turning on HDMI display and starting video stream")
-            self.hdmi.turn_on_display()
             self.hdmi.play_video(self.config['video']['default_stream'])
+            self.hdmi.turn_on_display()
             
     def setup_encoder_callbacks(self):
         """Configure the rotary encoder callbacks for system control.
@@ -224,26 +224,7 @@ class SmartchimeSystem:
         filename = self.available_sounds[self.selected_sound_index]
         self.logger.info(f"Selected sound: {filename}")
         self.oled.set_mode("centered_2line", "Select sound:", filename, duration=5)
-            
-    def play_selected_sound(self):
-        """Play the currently selected doorbell sound.
-        Also turns on the HDMI display and starts the default video stream.
-        Does nothing if no sounds are available."""
-        if self._check_control_throttle('toggle'):
-            self.logger.debug("Sound playback throttled, skipping")
-            return
-            
-        if not self.available_sounds:
-            self.logger.warning("Cannot play sound: no sounds available")
-            return
-            
-        self.current_sound_index = self.selected_sound_index
-        filename = self.available_sounds[self.current_sound_index]
-        self.logger.info(f"Playing selected sound: {filename}")
-        self.hdmi.turn_on_display()
-        self.audio.play_sound(filename)
-        self.hdmi.play_video(self.config['video']['default_stream'])
-            
+                        
     def on_connect(self, client, userdata, flags, rc):
         """MQTT connection callback.
         

@@ -43,20 +43,18 @@ class HDMIManager:
         self.turn_on_display()
         
         if self.player:
-            self.stop_video()
+            self.player.stop()
             
         try:
-            instance = vlc.Instance()
+            instance = vlc.Instance("--vout fb --aout dummy --no-audio --no-fb-tty --video-filter=rotate --rotate-angle=270.0")
+            
             self.player = instance.media_player_new()
-            media = instance.media_new(url)
-            self.player.set_media(media)
             
             # Configure VLC for framebuffer output
-            self.player.set_mrl("--vout=fb")
-            self.player.set_options(f"--fb-device={self.framebuffer}")
+            self.player.set_mrl(url)
                 
             self.player.play()
-            time.sleep(1)  # Give VLC a moment to start
+            time.sleep(3)  # Give VLC a moment to start
             
             if self.player.get_state() == vlc.State.Error:
                 self.logger.warning(f"Failed to play video stream: {url}")
@@ -74,3 +72,4 @@ class HDMIManager:
             self.player.stop()
             self.player = None
             self.logger.info("Video playback stopped")
+            self.turn_off_display()

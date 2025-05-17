@@ -44,9 +44,9 @@ audio:
   # ALSA mixer configuration
   mixer:
     # ALSA mixer device name
-    # Default: snd_rpi_hifiberry_dacplus
+    # Default: 0
     # Use 'aplay -l' to list available devices
-    device: snd_rpi_hifiberry_dacplus
+    device: 0
 
     # ALSA mixer control name
     # Default: PCM
@@ -61,13 +61,6 @@ video:
 
 # Display Device Configuration
 displays:
-  # HDMI display settings
-  hdmi:
-    # Linux framebuffer device for video output
-    # Default: /dev/fb0
-    # Requires read/write permissions
-    framebuffer: /dev/fb0  # Framebuffer device for direct output
-
   # OLED display settings (SSD1305)
   oled:
     # SPI port number
