@@ -1,7 +1,6 @@
 import vlc
 import time
 import logging
-from pathlib import Path
 from vcgencmd import Vcgencmd
 
 class HDMIManager:
@@ -10,61 +9,51 @@ class HDMIManager:
         self.logger = logging.getLogger(__name__)
         self.framebuffer = framebuffer
         self.player = None
-        self.is_display_on = False
         self.vcgencmd = Vcgencmd()
         self.logger.info(f"Initialized HDMI manager with framebuffer: {framebuffer}")
+
+        self._set_display_power("off")
         
-    def turn_on_display(self):
-        """Enable the HDMI display using vcgencmd."""
-        if not self.is_display_on:
-            try:
-                self.vcgencmd.display_power_on(2)
-                self.is_display_on = True
-                time.sleep(1)  # Wait for display to initialize
-                self.logger.info("HDMI display enabled")
-            except Exception as e:
-                self.logger.error(f"Failed to enable HDMI display: {e}")
-            
-    def turn_off_display(self):
-        """Disable the HDMI display."""
-        if self.is_display_on:
-            if self.player:
-                self.stop_video()
-            try:
+    def _set_display_power(self, state):
+        try:
+            if state == 'off':
                 self.vcgencmd.display_power_off(2)
-                self.logger.info("HDMI display disabled")
-            except Exception as e:
-                self.logger.error(f"Failed to disable HDMI display: {e}")
-            self.is_display_on = False
+            elif state == 'on':
+                self.vcgencmd.display_power_on(2)
             
+            self.logger.info(f"HDMI display powered {state}")
+            
+        except Exception as e:
+            self.logger.error(f"Failed to power {state} HDMI display: {e}")
+
+    def get_display_power_state(self):
+        return self.vcgencmd.display_power_state(2)
+    
     def play_video(self, url):
         """Play a video stream on the HDMI display."""
         self.logger.info(f"Attempting to play video from: {url}")
-        self.turn_on_display()
         
         if self.player:
             self.player.stop()
             
         try:
             instance = vlc.Instance("--vout fb --aout dummy --no-audio --no-fb-tty --video-filter=rotate --rotate-angle=270.0")
-            
             self.player = instance.media_player_new()
-            
-            # Configure VLC for framebuffer output
             self.player.set_mrl(url)
-                
             self.player.play()
             time.sleep(3)  # Give VLC a moment to start
             
+            self._set_display_power("on")
+
             if self.player.get_state() == vlc.State.Error:
                 self.logger.warning(f"Failed to play video stream: {url}")
-                self.turn_off_display()
+                self._set_display_power("off")
             else:
                 self.logger.info("Video playback started successfully")
                 
         except Exception as e:
             self.logger.warning(f"Error setting up video playback: {e}")
-            self.turn_off_display()
+            self._set_display_power("off")
         
     def stop_video(self):
         """Stop the currently playing video."""
@@ -72,4 +61,4 @@ class HDMIManager:
             self.player.stop()
             self.player = None
             self.logger.info("Video playback stopped")
-            self.turn_off_display()
+            self._set_display_power("off")
