@@ -1,7 +1,5 @@
 import logging
-from pathlib import Path
 from gpiozero import Button
-from functools import partial
 
 class RotaryEncoder:
     def __init__(self, clk_pin, dt_pin, sw_pin):
@@ -130,9 +128,3 @@ class EncoderManager:
         except Exception as e:
             self.logger.error(f"Failed to set sound selection encoder callbacks: {e}")
             raise
-        
-    def cleanup(self):
-        """Clean up GPIO resources.
-        Note: gpiozero handles cleanup automatically, but we keep this method
-        for compatibility and explicit cleanup if needed."""
-        self.logger.info("GPIO cleanup handled automatically by gpiozero")
