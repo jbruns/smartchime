@@ -7,17 +7,16 @@ logging.basicConfig(
 
 try:
     # Import and apply the patch
-    from luma_patch import apply_luma_patch
+    import luma_patch
     logging.info("Luma patch imported")
+
 except Exception as e:
     logging.error(f"Failed to import luma patch: {e}", exc_info=True)
 
-import os
 import json
 import time
 import yaml
 import logging
-from pathlib import Path
 from datetime import datetime
 import paho.mqtt.client as mqtt
 
@@ -97,12 +96,16 @@ class SmartchimeSystem:
             self.mqtt_client.on_disconnect = self.on_disconnect
             
             # Initialize state
-            self.current_sound_index = 0
-            self.selected_sound_index = 0
+            self.current_sound_index = None
             self.available_sounds = self.audio.get_available_sounds()
             if not self.available_sounds:
                 self.logger.warning("No sound files found in audio directory")
-            
+            else:
+                # convenience: set the current sound index to the default sound, if we find a match
+                for i in range(0, len(self.available_sounds)):
+                    if self.available_sounds[i] == self.config['audio']['default_sound']:
+                        self.current_sound_index = i
+
             # Setup encoder callbacks
             self.setup_encoder_callbacks()
             self.logger.info("System initialization complete")
@@ -119,14 +122,11 @@ class SmartchimeSystem:
             self.logger.debug("Display toggle throttled, skipping")
             return
             
-        if self.hdmi.is_display_on:
-            self.logger.info("Turning off HDMI display")
-            self.hdmi.turn_off_display()
-        else:
-            self.logger.info("Turning on HDMI display and starting video stream")
+        if self.hdmi.get_display_power_state() == "off":
             self.hdmi.play_video(self.config['video']['default_stream'])
-            self.hdmi.turn_on_display()
-            
+        else:
+            self.hdmi.stop_video()
+
     def setup_encoder_callbacks(self):
         """Configure the rotary encoder callbacks for system control.
         
@@ -180,7 +180,7 @@ class SmartchimeSystem:
             return True
             
         # Get the throttle period from config, default to 20 cycles
-        throttle_config = self.config.get('controls', {}).get('throttle', {})
+        throttle_config = self.config['controls']['throttle']
         throttle_period = throttle_config.get(control_type, throttle_config.get('default', 20))
         
         # Set the lock period
@@ -203,8 +203,8 @@ class SmartchimeSystem:
             self.logger.warning("Cannot select next sound: no sounds available")
             return
             
-        self.selected_sound_index = (self.selected_sound_index + 1) % len(self.available_sounds)
-        filename = self.available_sounds[self.selected_sound_index]
+        self.current_sound_index = (self.current_sound_index + 1) % len(self.available_sounds)
+        filename = self.available_sounds[self.current_sound_index]
         self.logger.info(f"Selected sound: {filename}")
         self.oled.set_mode("centered_2line", "Select sound:", filename, duration=5)
             
@@ -220,8 +220,8 @@ class SmartchimeSystem:
             self.logger.warning("Cannot select previous sound: no sounds available")
             return
             
-        self.selected_sound_index = (self.selected_sound_index - 1) % len(self.available_sounds)
-        filename = self.available_sounds[self.selected_sound_index]
+        self.current_sound_index = (self.current_sound_index + 1) % len(self.available_sounds)
+        filename = self.available_sounds[self.current_sound_index]
         self.logger.info(f"Selected sound: {filename}")
         self.oled.set_mode("centered_2line", "Select sound:", filename, duration=5)
                         
@@ -311,7 +311,8 @@ class SmartchimeSystem:
             if topic == self.config['mqtt']['topics']['doorbell']:
                 if payload['active']:
                     self.oled.set_temporary_message("Someone's at the door!")
-                    self.audio.play_sound(self.config['audio']['default_sound'])
+                    sound_file = self.available_sounds[self.current_sound_index] or self.config['audio']['default_sound']
+                    self.audio.play_sound(sound_file)
                     video_url = payload['video_url'] or self.config['video']['default_stream']
                     self.hdmi.play_video(video_url)
                 else:
@@ -389,7 +390,7 @@ class SmartchimeSystem:
                         self.control_locks[control_type] -= 1
                         if self.control_locks[control_type] == 0:
                             self.logger.debug(f"{control_type} control lock released")
-                time.sleep(0.05)
+                time.sleep(0.0125)
                 
         except KeyboardInterrupt:
             self.logger.info("Received shutdown signal")
@@ -407,11 +408,10 @@ class SmartchimeSystem:
         - Turns off HDMI display
         - Cleans up OLED display"""
         self.logger.info("Cleaning up system resources")
-        self.mqtt_client.loop_stop()
-        self.mqtt_client.disconnect()
-        self.encoders.cleanup()
-        self.hdmi.turn_off_display()
-        self.audio.cleanup()
+        if self.mqtt_client:
+            self.mqtt_client.loop_stop()
+            self.mqtt_client.disconnect()
+        self.hdmi.stop_video()
         self.oled.cleanup()
         self.logger.info("Cleanup complete")
 
