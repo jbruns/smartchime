@@ -120,6 +120,10 @@ class OLEDManager:
         # Clear any temporary message state
         self._cancel_temp_message()
         
+        # if switching modes, clear the display
+        if self.current_mode != mode:
+            self._clear_display()
+            
         # Update display state
         self.current_mode = mode
         if mode == self.MODE_CENTERED:
@@ -218,7 +222,7 @@ class OLEDManager:
             self.last_minute = current_time.minute
         
         # Update status bar if needed
-        if self.current_mode == self.MODE_DEFAULT and self.status_update_needed:
+        if self.status_update_needed:
             self._update_status_bar()
             
         # Update content area if needed
@@ -352,7 +356,8 @@ class OLEDManager:
             x_pos = (self.device.width - msg_width) // 2
         else:
             # Scroll long messages
-            x_pos = self.device.width - self.scroll_position
+            if not self.scroll_paused:
+                x_pos = self.device.width - self.scroll_position
             
         draw.text((x_pos, 0), self.current_message, font=self.scroll_font, fill="white")
         
@@ -411,7 +416,7 @@ class OLEDManager:
             return "now"
             
         if self.last_motion_time is None:
-            return "??"
+            return "--"
             
         delta = datetime.now(timezone.utc) - self.last_motion_time
         minutes = int(delta.total_seconds() / 60)
@@ -435,6 +440,7 @@ class OLEDManager:
     def _revert_to_default(self):
         """Revert to default mode."""
         if self.mode_timer:
+            self.mode_timer.cancel()
             self.mode_timer = None
 
         self.set_mode(self.MODE_DEFAULT)
