@@ -4,13 +4,12 @@ import logging
 from vcgencmd import Vcgencmd
 
 class HDMIManager:
-    def __init__(self, framebuffer):
+    def __init__(self):
         """Initialize HDMI display manager."""
         self.logger = logging.getLogger(__name__)
-        self.framebuffer = framebuffer
         self.player = None
         self.vcgencmd = Vcgencmd()
-        self.logger.info(f"Initialized HDMI manager with framebuffer: {framebuffer}")
+        self.logger.info(f"Initialized HDMI manager")
 
         self._set_display_power("off")
         

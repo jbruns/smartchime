@@ -44,9 +44,9 @@ audio:
   # ALSA mixer configuration
   mixer:
     # ALSA mixer device name
-    # Default: 0
+    # Default: default
     # Use 'aplay -l' to list available devices
-    device: 0
+    device: default
 
     # ALSA mixer control name
     # Default: PCM

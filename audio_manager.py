@@ -4,7 +4,7 @@ import logging
 from pathlib import Path
 
 class AudioManager:
-    def __init__(self, audio_dir, mixer_device='0', mixer_control='Digital', oled_manager=None):
+    def __init__(self, audio_dir, mixer_device='default', mixer_control='Digital', oled_manager=None):
         """Initialize the audio manager with ALSA mixer and sound directory."""
         self.logger = logging.getLogger(__name__)
         self.audio_dir = Path(audio_dir)
