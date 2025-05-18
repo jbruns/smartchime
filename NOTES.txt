@@ -1,0 +1,49 @@
+dietpi-config:
+  - set locale, network, wifi according to your environment.
+  - display mode and rotation - allow vc4-fkms-v3d to be enabled. FKMS!
+  - Waveshare AMOLED: set custom resolution of 1080x1920@60. Rotate 270. Reboot.
+  - enable Rpi Codecs
+  - Audio options: allow alsa to be installed
+  - Sound card: select hifiberry-dacplus
+  - Advanced options: enable SPI
+  
+
+sudo apt install python3-pip python3-dev vlc git python3.11-venv build-essential gcc libasound2-dev
+sudo dietpi-software install 37 (shairport-sync)
+sudo systemctl unmask systemd-logind
+sudo usermod -aG video,render,audio,gpio,spi dietpi
+
+edit /usr/local/etc/shairport-sync.conf:
+  Adjust the ALSA mixer name
+  Enable metadata
+  
+/etc/udev/rules.d/10-local-rpi.rules:
+
+KERNEL=="vchiq", GROUP="video", MODE="0660"
+KERNEL=="vcsm-cma", GROUP="video", MODE="0660"
+KERNEL=="vcio", GROUP="video", MODE="0660"
+
+git clone https://github.com/jbruns/smartchime
+cp config.example.yaml config.yaml
+customize to your liking
+
+python3 -m venv .venv
+source .venv/bin/activate
+pip3 install -r requirements.txt
+
+systemd unit:
+
+[Unit]
+Description=Smartchime
+After=network.target
+
+[Service]
+type=exec
+WorkingDirectory=/home/dietpi/smartchime
+ExecStart=/home/dietpi/smartchime/.venv/bin/python /home/dietpi/smartchime/main.py
+Restart=always
+User=dietpi
+Group=dietpi
+
+[Install]
+WantedBy=multi-user.target

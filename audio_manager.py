@@ -52,6 +52,7 @@ class AudioManager:
         if self.mixer.getmute()[0] == 1: # Muted
             self.oled.set_mode("centered_2line", "Volume:", "MUTE", duration=5)
         else:
+            self.current_volume = self.mixer.getvolume()[0]
             self.oled.set_mode("centered_2line", "Volume:", f"{self.current_volume}%", duration=5)
                        
     def adjust_volume(self, delta):
