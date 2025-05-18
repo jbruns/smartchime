@@ -9,4 +9,3 @@ rpi-lgpio==0.6
 PyYAML==6.0.1
 vcgencmd==0.1.1
 pyalsaaudio==0.9.2
-fontawesome-free==5.15.4

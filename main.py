@@ -67,7 +67,7 @@ class SmartchimeSystem:
                 oled_manager=self.oled
             )
             
-            self.hdmi = HDMIManager(self.config['displays']['hdmi']['framebuffer'])
+            self.hdmi = HDMIManager()
                  
             self.encoders = EncoderManager(
                 volume_pins=(
