@@ -49,7 +49,7 @@ class AudioManager:
         """Show volume information on the OLED display."""
         if not self.oled:
             return
-        if self.is_muted:
+        if self.mixer.getmute()[0] == 1: # Muted
             self.oled.set_mode("centered_2line", "Volume:", "MUTE", duration=5)
         else:
             self.oled.set_mode("centered_2line", "Volume:", f"{self.current_volume}%", duration=5)
@@ -80,7 +80,7 @@ class AudioManager:
             self._display_volume()
         
         except alsaaudio.ALSAAudioError as e:
-            self.logger.error(f"Failed to {('mute' if self.is_muted else 'unmute')} audio: {e}")
+            self.logger.error(f"Failed to toggle mute status: {e}")
         
     def _set_volume(self, volume):
         """Set the system volume to a specific level."""
