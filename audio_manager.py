@@ -64,7 +64,7 @@ class AudioManager:
             
         old_volume = self.mixer.getvolume(units=2)[0] # dB, 0 to -10300
         new_volume = min(0, max(-10300, old_volume + delta))
-        self._set_volume(new_volume,units=2)
+        self._set_volume(new_volume)
         self._display_volume()
         self.logger.info(f"Volume adjusted: {old_volume / 100} dB -> {new_volume / 100} dB")
         
@@ -86,8 +86,8 @@ class AudioManager:
     def _set_volume(self, volume):
         """Set the system volume to a specific level."""
         try:
-            self.mixer.setvolume(volume)
-            self.logger.debug(f"Volume set to {volume}%")
+            self.mixer.setvolume(volume,units=2)
+            self.logger.debug(f"Volume set to {volume / 100} dB")
         
         except alsaaudio.ALSAAudioError as e:
             self.logger.error(f"Failed to set volume to {volume}%: {e}")
