@@ -63,7 +63,7 @@ class AudioManager:
             return
             
         old_volume = self.mixer.getvolume(units=2)[0] # dB, 0 to -10300
-        new_volume = min(0, max(-10300, self.old_volume + delta))
+        new_volume = min(0, max(-10300, old_volume + delta))
         self._set_volume(new_volume,units=2)
         self._display_volume()
         self.logger.info(f"Volume adjusted: {old_volume / 100} dB -> {new_volume / 100} dB")
