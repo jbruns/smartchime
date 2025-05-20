@@ -52,8 +52,8 @@ class AudioManager:
         if self.mixer.getmute()[0] == 1: # Muted
             self.oled.set_mode("centered_2line", "Volume:", "MUTE", duration=5)
         else:
-            self.current_volume = self.mixer.getvolume()[0]
-            self.oled.set_mode("centered_2line", "Volume:", f"{self.current_volume}%", duration=5)
+            self.current_volume = self.mixer.getvolume(units=2)[0] / 100
+            self.oled.set_mode("centered_2line", "Volume:", f"{self.current_volume} dB", duration=5)
                        
     def adjust_volume(self, delta):
         """Adjust the system volume by a relative amount."""
@@ -62,11 +62,11 @@ class AudioManager:
             self._display_volume()
             return
             
-        old_volume = self.mixer.getvolume()[0]
-        new_volume = max(0, min(100, old_volume + int(delta * 100)))
-        self._set_volume(new_volume)
+        old_volume = self.mixer.getvolume(units=2)[0] # dB, 0 to -10300
+        new_volume = min(0, max(-10300, self.old_volume + delta))
+        self._set_volume(new_volume,units=2)
         self._display_volume()
-        self.logger.info(f"Volume adjusted: {old_volume}% -> {new_volume}%")
+        self.logger.info(f"Volume adjusted: {old_volume / 100} dB -> {new_volume / 100} dB")
         
     def toggle_mute(self):
         """Toggle the audio mute state."""

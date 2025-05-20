@@ -36,7 +36,7 @@ class HDMIManager:
             self.player.stop()
             
         try:
-            instance = vlc.Instance("--vout fb --aout dummy --no-audio --no-fb-tty --video-filter=rotate --rotate-angle=270.0")
+            instance = vlc.Instance("--quiet --no-audio --no-video-title --fullscreen --video-on-top --no-osd --vout=fb --no-fb-tty --no-xlib --aout=dummy")
             self.player = instance.media_player_new()
             self.player.set_mrl(url)
             self.player.play()

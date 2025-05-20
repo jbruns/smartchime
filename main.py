@@ -138,11 +138,11 @@ class SmartchimeSystem:
         # Wrapper functions for volume control with throttling
         def volume_up_throttled():
             if not self._check_control_throttle('volume'):
-                self.audio.adjust_volume(0.05)
+                self.audio.adjust_volume(100)
                 
         def volume_down_throttled():
             if not self._check_control_throttle('volume'):
-                self.audio.adjust_volume(-0.05)
+                self.audio.adjust_volume(-100)
                 
         def volume_mute_throttled():
             if not self._check_control_throttle('toggle'):
@@ -220,7 +220,7 @@ class SmartchimeSystem:
             self.logger.warning("Cannot select previous sound: no sounds available")
             return
             
-        self.current_sound_index = (self.current_sound_index + 1) % len(self.available_sounds)
+        self.current_sound_index = (self.current_sound_index - 1) % len(self.available_sounds)
         filename = self.available_sounds[self.current_sound_index]
         self.logger.info(f"Selected sound: {filename}")
         self.oled.set_mode("centered_2line", "Select sound:", filename, duration=5)
@@ -317,6 +317,7 @@ class SmartchimeSystem:
                     self.hdmi.play_video(video_url)
                 else:
                     self.oled.clear_temporary_message()
+                    self.hdmi.stop_video()
                 
         except Exception as e:
             self.logger.error(f"Error processing {topic} message: {e}")
