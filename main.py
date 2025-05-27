@@ -437,12 +437,7 @@ class SmartchimeSystem:
             self.logger.debug("Set MQTT authentication credentials")
             
         try:
-            self.mqtt_client.connect(
-                self.config['mqtt']['broker'],
-                self.config['mqtt']['port'],
-                60
-            )
-            self.mqtt_client.loop_start()
+            self.handle_mqtt_connection()
                        
             self.logger.info("System running")
             while True:
@@ -495,6 +490,34 @@ class SmartchimeSystem:
             self.logger.info("Stopped Shairport metadata reader")
         self.control_locks.clear()  # Reset control locks
         self.logger.info("Cleanup complete")
+
+    def handle_mqtt_connection(self):
+        """Handle MQTT connection with retry mechanism."""
+        max_retries = self.config.get('mqtt', {}).get('max_retries', 5)
+        initial_delay = self.config.get('mqtt', {}).get('initial_retry_delay', 2)  # seconds
+
+        retries = 0
+        while retries < max_retries:
+            try:
+                self.logger.info(f"Attempting to connect to MQTT broker (Attempt {retries + 1}/{max_retries})")
+                self.mqtt_client.connect(
+                    self.config['mqtt']['broker'],
+                    self.config['mqtt']['port'],
+                    60
+                )
+                self.mqtt_client.loop_start()
+                self.logger.info("Connected to MQTT broker successfully")
+                return  # Exit the function if connection is successful
+            except Exception as e:
+                self.logger.error(f"MQTT connection failed: {e}")
+                retries += 1
+                delay = initial_delay * (2 ** (retries - 1))  # Exponential backoff
+                self.logger.info(f"Retrying in {delay} seconds...")
+                time.sleep(delay)
+
+        self.logger.error("Exceeded maximum MQTT connection retries. System will shut down.")
+        self.cleanup()
+        raise RuntimeError("Failed to connect to MQTT broker after multiple attempts")
 
 if __name__ == "__main__":
     try:
