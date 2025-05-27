@@ -196,6 +196,9 @@ class SmartchimeSystem:
             self.cleanup()
             raise
 
+        self.shutdown_event = threading.Event()
+        self.threads = []
+
     def toggle_display(self):
         """Toggle the display power state between on and off."""
         if self._check_control_throttle('toggle'):
@@ -265,9 +268,21 @@ class SmartchimeSystem:
 
         return False
 
+    def start_thread(self, target, args=()):
+        """Start a new thread and add it to the thread list."""
+        thread = threading.Thread(target=target, args=args)
+        thread.start()
+        self.threads.append(thread)
+
     def cleanup(self):
         """Clean up resources before shutting down."""
         self.logger.info("Cleaning up system resources")
+        self.shutdown_event.set()  # Signal threads to stop
+
+        for thread in self.threads:
+            self.logger.info(f"Waiting for thread {thread.name} to finish")
+            thread.join()  # Wait for threads to terminate
+
         if self.mqtt_client:
             self.mqtt_client.loop_stop()
             self.mqtt_client.disconnect()
@@ -480,6 +495,12 @@ class SmartchimeSystem:
     def cleanup(self):
         """Clean up resources before shutting down."""
         self.logger.info("Cleaning up system resources")
+        self.shutdown_event.set()  # Signal threads to stop
+
+        for thread in self.threads:
+            self.logger.info(f"Waiting for thread {thread.name} to finish")
+            thread.join()  # Wait for threads to terminate
+
         if self.mqtt_client:
             self.mqtt_client.loop_stop()
             self.mqtt_client.disconnect()
