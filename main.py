@@ -27,6 +27,7 @@ __version__ = "2.0.0"
 
 class SmartchimeSystem:
     def __init__(self):
+        """Initialize the Smartchime system and its components."""
         logging.basicConfig(
             format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
             level=logging.DEBUG
@@ -109,6 +110,7 @@ class SmartchimeSystem:
             raise
 
     def toggle_display(self):
+        """Toggle the display power state between on and off."""
         if self._check_control_throttle('toggle'):
             self.logger.debug("Display toggle throttled, skipping")
             return
@@ -119,17 +121,21 @@ class SmartchimeSystem:
             self.hdmi.stop_video()
 
     def setup_encoder_callbacks(self):
+        """Set up the callbacks for the encoders (volume and sound selection)."""
         self.logger.debug("Setting up encoder callbacks")
         
         def volume_up_throttled():
+            """Throttle function for volume up action."""
             if not self._check_control_throttle('volume'):
                 self.audio.adjust_volume(100)
                 
         def volume_down_throttled():
+            """Throttle function for volume down action."""
             if not self._check_control_throttle('volume'):
                 self.audio.adjust_volume(-100)
                 
         def volume_mute_throttled():
+            """Throttle function for volume mute toggle action."""
             if not self._check_control_throttle('toggle'):
                 self.audio.toggle_mute()
         
@@ -146,6 +152,14 @@ class SmartchimeSystem:
         )
         
     def _check_control_throttle(self, control_type='default'):
+        """Check and manage the throttle control for various actions.
+
+        Args:
+            control_type (str): The type of control to check (e.g., 'volume', 'sound_select').
+
+        Returns:
+            bool: True if the control is currently throttled, False otherwise.
+        """
         if control_type not in self.control_locks:
             control_type = 'default'
             
@@ -162,6 +176,7 @@ class SmartchimeSystem:
         return False
 
     def next_sound(self):
+        """Select the next sound in the available sounds list."""
         if self._check_control_throttle('sound_select'):
             self.logger.debug("Sound selection throttled, skipping next sound")
             return
@@ -177,6 +192,7 @@ class SmartchimeSystem:
         self.oled.set_mode("centered_2line", "Select sound:", filename, duration=5)
             
     def prev_sound(self):
+        """Select the previous sound in the available sounds list."""
         if self._check_control_throttle('sound_select'):
             self.logger.debug("Sound selection throttled, skipping previous sound")
             return
@@ -192,6 +208,14 @@ class SmartchimeSystem:
         self.oled.set_mode("centered_2line", "Select sound:", filename, duration=5)
                         
     def on_connect(self, client, userdata, flags, rc):
+        """Handle the MQTT connection event.
+
+        Args:
+            client: The MQTT client instance.
+            userdata: User data of the client.
+            flags: Response flags from the broker.
+            rc: Connection result code.
+        """
         if rc == 0:
             self.logger.info("Connected to MQTT broker")
             topics = [
@@ -205,12 +229,25 @@ class SmartchimeSystem:
             self.logger.error(f"Failed to connect to MQTT broker: {rc}")
             
     def on_disconnect(self, client, userdata, rc):
+        """Handle the MQTT disconnection event.
+
+        Args:
+            client: The MQTT client instance.
+            userdata: User data of the client.
+            rc: Disconnection result code.
+        """
         if rc != 0:
             self.logger.error(f"Unexpected MQTT disconnection: {rc}")
         else:
             self.logger.info("Disconnected from MQTT broker")
             
     def handle_event_message(self, topic, payload):
+        """Handle incoming event messages from MQTT.
+
+        Args:
+            topic (str): The MQTT topic of the message.
+            payload (dict): The message payload as a dictionary.
+        """
         try:
             if not isinstance(payload, dict):
                 self.logger.warning(f"Invalid payload format on {topic}: expected dict, got {type(payload)}")
@@ -253,6 +290,13 @@ class SmartchimeSystem:
             self.logger.debug(f"Problematic payload: {payload}")
             
     def on_message(self, client, userdata, msg):
+        """Handle incoming MQTT messages.
+
+        Args:
+            client: The MQTT client instance.
+            userdata: User data of the client.
+            msg: The received message.
+        """
         self.logger.debug(f"Received message on topic {msg.topic}")
         try:
             payload = json.loads(msg.payload.decode())
@@ -268,11 +312,17 @@ class SmartchimeSystem:
             self.logger.debug(f"Raw payload: {msg.payload}")
             
     def handle_message(self, payload):
+        """Handle and display a message payload.
+
+        Args:
+            payload (dict): The message payload.
+        """
         message = payload['text'] if isinstance(payload, dict) and 'text' in payload else str(payload)
         self.logger.info(f"Displaying message: {message}")
         self.oled.set_scrolling_message(message)
         
     def run(self):
+        """Run the main loop of the Smartchime system, processing events and messages."""
         self.logger.info("Starting doorbell system")
 
         mqtt_username = self.config['mqtt']['username']
@@ -310,6 +360,13 @@ class SmartchimeSystem:
             raise
             
     def _handle_airplay_metadata(self, artist, title, is_playing):
+        """Handle metadata updates from AirPlay.
+
+        Args:
+            artist (str): Name of the artist.
+            title (str): Title of the track.
+            is_playing (bool): Playback state.
+        """
         try:
             if is_playing and (artist or title):
                 display_text = ""
@@ -327,6 +384,7 @@ class SmartchimeSystem:
             self.logger.error(f"Error handling AirPlay metadata: {e}")
 
     def cleanup(self):
+        """Clean up resources before shutting down."""
         self.logger.info("Cleaning up system resources")
         if self.mqtt_client:
             self.mqtt_client.loop_stop()

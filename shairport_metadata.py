@@ -9,9 +9,10 @@ class ShairportMetadata:
 
     def __init__(self, pipe_path="/tmp/shairport-sync-metadata"):
         """Initialize the shairport metadata reader.
-        
+
         Args:
-            pipe_path (str): Path to the shairport-sync metadata pipe"""
+            pipe_path (str): Path to the shairport-sync metadata pipe.
+        """
         self.logger = logging.getLogger(__name__)
         self.pipe_path = pipe_path
         self.current_artist = ""
@@ -45,18 +46,20 @@ class ShairportMetadata:
 
     def add_callback(self, callback):
         """Add a callback to be called when metadata changes.
-        
+
         Args:
-            callback (callable): Function to call with (artist, title, is_playing) arguments"""
+            callback (callable): Function to call with (artist, title, is_playing) arguments.
+        """
         if callable(callback) and callback not in self._callbacks:
             self._callbacks.append(callback)
             self.logger.debug(f"Added metadata callback {callback.__name__}")
 
     def remove_callback(self, callback):
         """Remove a previously added callback.
-        
+
         Args:
-            callback (callable): The callback function to remove"""
+            callback (callable): The callback function to remove.
+        """
         if callback in self._callbacks:
             self._callbacks.remove(callback)
             self.logger.debug(f"Removed metadata callback {callback.__name__}")
@@ -89,9 +92,10 @@ class ShairportMetadata:
 
     def _parse_metadata(self, xml_str):
         """Parse metadata XML and update current state.
-        
+
         Args:
-            xml_str (str): XML string to parse"""
+            xml_str (str): XML string to parse.
+        """
         try:
             root = ET.fromstring(xml_str)
             

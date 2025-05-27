@@ -19,6 +19,12 @@ class OLEDManager:
     MODE_CENTERED = "centered_2line"
 
     def __init__(self, spi_port=0, spi_device=0):
+        """Initialize the OLED display manager.
+
+        Args:
+            spi_port (int): SPI port number.
+            spi_device (int): SPI device number.
+        """
         self.logger = logging.getLogger(__name__)
         try:
             serial = spi(port=spi_port, device=spi_device)
@@ -74,6 +80,14 @@ class OLEDManager:
         self.content_update_needed = True
 
     def set_mode(self, mode, line1="", line2="", duration=None):
+        """Set the display mode and content.
+
+        Args:
+            mode (str): Display mode.
+            line1 (str): First line for centered mode.
+            line2 (str): Second line for centered mode.
+            duration (float): Duration before reverting to default mode.
+        """
         if mode not in [self.MODE_DEFAULT, self.MODE_CENTERED]:
             raise ValueError(f"Invalid mode: {mode}")
         
@@ -101,6 +115,11 @@ class OLEDManager:
         self.content_update_needed = True
 
     def set_scrolling_message(self, message):
+        """Set the scrolling message for default mode.
+
+        Args:
+            message (str): Message to scroll.
+        """
         if self.current_mode != self.MODE_DEFAULT:
             return
         
@@ -111,6 +130,12 @@ class OLEDManager:
         self.content_update_needed = True
 
     def set_temporary_message(self, message, duration=None):
+        """Set a temporary scrolling message with auto-revert.
+
+        Args:
+            message (str): Temporary message to display.
+            duration (float): Duration before reverting.
+        """
         if self.current_mode != self.MODE_DEFAULT:
             return
         
@@ -131,6 +156,7 @@ class OLEDManager:
             self.temp_timer.start()
 
     def clear_temporary_message(self):
+        """Clear the temporary scrolling message."""
         if self.current_mode != self.MODE_DEFAULT:
             return
         
@@ -138,6 +164,12 @@ class OLEDManager:
         self._restore_original_message()
 
     def update_motion_status(self, active=None, last_time=None):
+        """Update motion detection status.
+
+        Args:
+            active (bool): Current motion state.
+            last_time (datetime): Time of last detected motion.
+        """
         update_needed = False
         if active is not None and active != self.motion_active:
             self.motion_active = active
@@ -149,6 +181,7 @@ class OLEDManager:
             self.status_update_needed = True
 
     def update_display(self):
+        """Update the display, optimizing updates by section."""
         current_time = datetime.now()
         if self.current_mode == self.MODE_DEFAULT and current_time.minute != self.last_minute:
             self.status_update_needed = True
@@ -161,10 +194,12 @@ class OLEDManager:
             self._update_scroll_state()
 
     def _clear_display(self):
+        """Clear the OLED display."""
         with canvas(self.device) as draw:
             draw.rectangle((0, 0, self.device.width-1, self.device.height-1), outline=0, fill=0)
 
     def _update_status_bar(self):
+        """Update the status bar section."""
         try:
             status_image = Image.new('1', (self.device.width, 10))
             draw = ImageDraw.Draw(status_image)
@@ -196,6 +231,7 @@ class OLEDManager:
             self.logger.error(f"Error updating status bar: {e}", exc_info=True)
 
     def _update_content_area(self):
+        """Update the main content area."""
         try:
             content_image = Image.new('1', (self.device.width, 22))
             draw = ImageDraw.Draw(content_image)
@@ -211,6 +247,7 @@ class OLEDManager:
             self.logger.error(f"Error updating content area: {e}")
 
     def _draw_centered_text(self, draw):
+        """Draw centered text lines."""
         if self.line1:
             line1 = self._truncate_text(self.line1, self.device.width, draw)
             x1, y1 = self._center_text(line1, draw, 12, 0)
@@ -221,6 +258,7 @@ class OLEDManager:
             draw.text((x2, y2), line2, font=self.text_font, fill="white")
 
     def _draw_scrolling_text(self, draw):
+        """Draw scrolling text."""
         if self.current_mode == self.MODE_CENTERED or not self.current_message:
             return
         msg_width = self.scroll_font.getlength(self.current_message)
@@ -232,6 +270,7 @@ class OLEDManager:
         draw.text((x_pos, 0), self.current_message, font=self.scroll_font, fill="white")
 
     def _update_scroll_state(self):
+        """Update scrolling text state."""
         if self.current_mode == self.MODE_CENTERED or not self.current_message:
             return
         current_time = time.time()
@@ -255,6 +294,13 @@ class OLEDManager:
                 self.content_update_needed = True
 
     def _truncate_text(self, text, max_width, draw):
+        """Truncate text to fit width, adding ellipsis if needed.
+
+        Args:
+            text (str): Text to truncate.
+            max_width (int): Maximum width for the text.
+            draw (ImageDraw): Drawing context.
+        """
         if self.text_font.getlength(text) <= max_width:
             return text
         while len(text) > 3 and self.text_font.getlength(text[:-3] + "...") > max_width:
@@ -262,6 +308,14 @@ class OLEDManager:
         return text + "..."
 
     def _center_text(self, text, draw, height, y_offset):
+        """Calculate position to center text.
+
+        Args:
+            text (str): Text to center.
+            draw (ImageDraw): Drawing context.
+            height (int): Height of the text area.
+            y_offset (int): Vertical offset.
+        """
         text_width = self.text_font.getlength(text)
         bbox = self.text_font.getbbox(text)
         text_height = bbox[3] - bbox[1]
@@ -270,6 +324,7 @@ class OLEDManager:
         return x, y
 
     def _format_motion_time(self):
+        """Format time since last motion."""
         if self.motion_active:
             return "now"
         if self.last_motion_time is None:
@@ -281,6 +336,7 @@ class OLEDManager:
         return f"{minutes // 60}h"
 
     def _restore_original_message(self):
+        """Restore the original message after temporary message expires."""
         if self.original_message is not None:
             self.current_message = self.original_message
             self.scroll_position = 0
@@ -291,15 +347,18 @@ class OLEDManager:
         self.temp_timer = None
 
     def _revert_to_default(self):
+        """Revert to default mode."""
         if self.mode_timer:
             self.mode_timer.cancel()
             self.mode_timer = None
         self.set_mode(self.MODE_DEFAULT)
 
     def _cancel_temp_message(self):
+        """Cancel any active temporary message timer."""
         if self.temp_timer:
             self.temp_timer.cancel()
             self.temp_timer = None
 
     def cleanup(self):
+        """Clean up resources."""
         self._cancel_temp_message()
