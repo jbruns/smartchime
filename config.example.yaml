@@ -1,0 +1,108 @@
+# Smartchime Configuration
+
+# MQTT Connection Settings
+mqtt:
+  # MQTT broker hostname or IP address
+  # Default: localhost
+  broker: localhost
+
+  # MQTT broker port number
+  # Default: 1883
+  # Common alternatives: 8883 (TLS)
+  port: 1883
+
+  # MQTT authentication credentials
+  # Leave empty for no authentication
+  # Default: empty (no authentication)
+  username: ""
+  password: ""
+
+  # MQTT topics for system events
+  topics:
+    # Topic for doorbell ring events
+    # Payload format: {"active": bool, "timestamp": "ISO8601", "video_url": "string"}
+    doorbell: smartchime/doorbell/ring
+
+    # Topic for motion detection events
+    # Payload format: {"active": bool, "timestamp": "ISO8601", "video_url": "string"}
+    motion: smartchime/motion/detected
+
+    # Topic for displaying custom messages on OLED
+    # Payload format: {"text": "string"} or plain string
+    message: smartchime/display/message
+
+# Audio System Configuration
+audio:
+  # Directory containing WAV sound files for doorbell
+  # Must be absolute path with read permissions
+  directory: /path/to/audio/files
+
+  # Default sound file to play on doorbell events
+  # Must be a .wav file present in the audio directory
+  default_sound: doorbell.wav
+
+  # ALSA mixer configuration
+  mixer:
+    # ALSA mixer device name
+    # Default: default
+    # Use 'aplay -l' to list available devices
+    device: default
+
+    # ALSA mixer control name
+    # Default: PCM
+    # Common alternatives: Master, Speaker, Headphone
+    control: Digital
+
+# Video Stream Configuration
+video:
+  # Default video stream URL for doorbell camera
+  # Supports rtsp://, http://, or local device paths
+  default_stream: http://your-camera-stream-url
+
+# Display Device Configuration
+displays:
+  # OLED display settings (SSD1305)
+  oled:
+    # SPI port number
+    # Default: 0 (Connected to SPI0 on Raspberry Pi)
+    spi_port: 0
+    # OLED display device number (usually 0)
+    spi_device: 0
+
+# GPIO Pin Configuration
+gpio:
+  # Volume control rotary encoder
+  volume_encoder:
+    # GPIO pin numbers in BCM mode
+    clk: 15  # Clock signal pin
+    dt: 23   # Data signal pin
+    sw: 14   # Switch/button pin
+
+  # Sound selection rotary encoder
+  sound_select_encoder:
+    # GPIO pin numbers in BCM mode
+    clk: 27  # Clock signal pin
+    dt: 22   # Data signal pin
+    sw: 17   # Switch/button pin
+    
+# Control Input Throttling Configuration
+controls:
+  # Throttle periods in main loop cycles (~50ms each)
+  throttle:
+    # Volume adjustment throttling
+    volume: 10  # ~500ms between volume changes
+    
+    # Sound selection throttling
+    sound_select: 20  # ~1000ms between sound selections
+    
+    # Toggle actions (mute, display) throttling
+    toggle: 40  # ~2000ms between toggles
+    
+    # Default throttle for unspecified actions
+    default: 20  # ~1000ms
+
+# Shairport Sync Integration
+shairport:
+  # Path to the shairport-sync metadata pipe
+  # Default: /tmp/shairport-sync-metadata
+  metadata_pipe: /tmp/shairport-sync-metadata

@@ -1,299 +1,406 @@
-import json
 import logging
-import time
-import socket
-
-import paho.mqtt.client as mqtt
-import RPi.GPIO as GPIO
-
-from datetime import datetime
-from dateutil import tz
-from pathlib import Path
-
-from luma.core.interface.serial import spi
-from luma.core.render import canvas
-from luma.core.image_composition import ImageComposition
-from luma.oled.device import ssd1306
-from luma.core import cmdline, error
-
-from PIL import ImageFont
-
-from vcgencmd import Vcgencmd
-
-from scroller import Scroller
-from synchronizer import Synchronizer
-from widgetFactory import WidgetFactory
-from encoder import Encoder
-from stateTracker import StateTracker
-
 logging.basicConfig(
-    level=logging.DEBUG,
-    format='%(asctime)-15s - %(message)s'
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    level=logging.DEBUG
 )
 
-def load_config():
-    with open('config.json', 'r') as jsonConfig:
-        data = json.load(jsonConfig)
-        return data
-
-def get_device():
-    parser = cmdline.create_parser(description='smartchime.luma')
-    lumaConfig = []
-    for key,value in config['luma'].items():
-        lumaConfig.append(f"--{key}={value}")
-
-    args = parser.parse_args(lumaConfig)
-
-    # create device
-    try:
-        device = cmdline.create_device(args)
-        return device
-
-    except error.Error as e:
-        parser.error(e)
-        return None
-
-def make_font(name, size):
-    font_path = str(Path(__file__).resolve().parent.joinpath('fonts', name))
-    return ImageFont.truetype(font_path, size)
-
 try:
-    state_tracker = StateTracker()
-    
-    config = load_config()
-    amoled_config = config['smartchime']['amoled_display']
-    oled_config = config['smartchime']['oled_display']
-    mqtt_config = config['smartchime']['mqtt']
-    doorbell_config = config['smartchime']['doorbell']
-    controls_config = config['smartchime']['controls']
-    fonts_config = oled_config['fonts'][0]
+    import luma_patch
+    logging.info("Luma patch imported")
 
-    # Enable or disable major functions and provide that state to the state tracker.
-    state_tracker.oled_enabled = oled_config['enabled']
-    state_tracker.amoled_enabled = amoled_config['enabled']
-    state_tracker.doorbell_enabled = doorbell_config['enabled']
-    state_tracker.controls_enabled = controls_config['enabled']
-    state_tracker.mqtt_enabled = mqtt_config['enabled']
+except Exception as e:
+    logging.error(f"Failed to import luma patch: {e}", exc_info=True)
 
-    # Set up the AMOLED display.
-    if state_tracker.amoled_enabled:
-        print("[main] initializing AMOLED display")
-        state_tracker.amoled_always_on = amoled_config['always_on']
-        state_tracker.amoled_display_id = amoled_config['display_id']
-        state_tracker.amoled = Vcgencmd()
-        if state_tracker.amoled_always_on:
-            state_tracker.amoled.display_power_on(state_tracker.amoled_display_id)
+import json
+import time
+import yaml
+from datetime import datetime
+import paho.mqtt.client as mqtt
 
-    # Initialize the OLED display.
-    if state_tracker.oled_enabled:
-        print("[main] Initializing OLED display")
-        device = get_device()
-        image_composition = ImageComposition(device)
+from audio_manager import AudioManager
+from hdmi_manager import HDMIManager
+from oled_manager import OLEDManager
+from encoder_manager import EncoderManager
+from shairport_metadata import ShairportMetadata
 
-        state_tracker.oled_default_font = make_font(fonts_config['font_large'][0]['name'],fonts_config['font_large'][0]['size'])
-        state_tracker.oled_small_font = make_font(fonts_config['font_small'][0]['name'],fonts_config['font_small'][0]['size'])
+__version__ = "2.0.0"
 
-        # HACK: temporary workaround for ssd1305 differences
-        if oled_config['ssd1305hackenabled']:
-            device.command(
-                0xAE, 0x04, 0x10, 0x40, 0x81, 0x80, 0xA1, 0xA6,
-                0xA8, 0x1F, 0xC8, 0xD3, 0x00, 0xD5, 0xF0, 0xd8,
-                0x05, 0xD9, 0xC2, 0xDA, 0x12, 0xDB, 0x08, 0xAF)
-            device._colstart += 4
-            device._colend += 4
-        # END HACK
+class SmartchimeSystem:
+    def __init__(self):
+        """Initialize the Smartchime system and its components."""
+        logging.basicConfig(
+            format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+            level=logging.DEBUG
+        )
+        self.logger = logging.getLogger(__name__)
+        self.logger.info(f"Initializing Smartchime v{__version__}")
 
-        # initialize OLED layout
-        # row settings that won't change
-        num_rows = len(oled_config['arrangement'][0])
-        scrollers = []
+        try:
+            with open('config.yaml', 'r') as f:
+                self.config = yaml.safe_load(f)
+                self.logger.info("Configuration loaded successfully")
 
-        for row in oled_config['arrangement'][0]:
-            vars()[row] = oled_config['arrangement'][0][row]
-            # transform font strings to ImageDraw objects
-            vars()[row][0]['iconFont'] = make_font(fonts_config[vars()[row][0]['iconFont']][0]['name'],fonts_config[vars()[row][0]['iconFont']][0]['size'])
-            vars()[row][0]['textFont'] = make_font(fonts_config[vars()[row][0]['textFont']][0]['name'],fonts_config[vars()[row][0]['textFont']][0]['size'])
+        except Exception as e:
+            self.logger.error(f"Failed to load configuration: {e}")
+            raise
 
-        # Enable/disable widgets. The clock widget doesn't depend on external data, so to disable it, do not assign it in a column.
-        # On the other hand, if other widgets are disabled, their external data will not be pulled in. Placeholder values will be used instead.
-        state_tracker.oled_widget_motion_enabled = oled_config['motion'][0]['enabled']
-        state_tracker.oled_widget_message_enabled = oled_config['message'][0]['enabled']
+        try:
+            self.logger.info("Initializing system components")
 
-    else:
-        device = False
-        image_composition = False
-    
-    if state_tracker.mqtt_enabled:
-        # set up MQTT client and subscribe to topics/functions that are enabled in config.
-        print("[main] Initializing MQTT connection")
-        mqtt_client = mqtt.Client(socket.getfqdn())
-        mqtt_client.username_pw_set(mqtt_config['username'],mqtt_config['password'])
-        
-        if state_tracker.oled_enabled and state_tracker.oled_widget_message_enabled:
-            print("[main] Initializing OLED message widget")
-            mqtt_client.message_topic = oled_config['message'][0]['topic']
-            # initialize the widget with a placeholder value until it is replaced by a real MQTT message.
-            state_tracker.message = "smartchime ready for action!"
-        else:
-            mqtt_client.message_topic = False
-            state_tracker.message = ""
-            state_tracker.last_message = ""
-        
-        if state_tracker.oled_enabled and state_tracker.oled_widget_motion_enabled:
-            print("[main] Initializing OLED motion widget")
-            mqtt_client.motion_topic = oled_config['motion'][0]['topic']
-            # initialize the widget with a placeholder value until it is replaced by a real MQTT message.
-            state_tracker.last_motion = "---"
-        else:
-            mqtt_client.motion_topic = False
+            self.oled = OLEDManager(
+                self.config['displays']['oled']['spi_port'],
+                self.config['displays']['oled']['spi_device']
+            )
+            
+            self.shairport = ShairportMetadata(
+                pipe_path=self.config.get('shairport', {}).get('metadata_pipe', '/tmp/shairport-sync-metadata')
+            )
+            self.shairport.add_callback(self._handle_airplay_metadata)
+            self.shairport.start()
+            self.logger.info("Initialized Shairport metadata reader")
 
-        if state_tracker.doorbell_enabled:
-            print("[main] Initializing doorbell")
-            mqtt_client.doorbell_topic = doorbell_config['topic']
-            state_tracker.doorbell_audioFiles = doorbell_config['audioFiles']
-            state_tracker.doorbell_isBattery = doorbell_config['isBattery']
-            state_tracker.doorbell_cameraPlayerArgs = [
-                '--no-osd',
-                '--no-keys'
-            ]
-            # if the doorbell camera is battery powered, we expect a shorter video that needs to loop.
-            # otherwise, the live stream is expected.
-            if state_tracker.doorbell_isBattery:
-                state_tracker.doorbell_cameraPlayerArgs.append('--loop')
+            self.audio = AudioManager(
+                self.config['audio']['directory'],
+                mixer_device=self.config['audio']['mixer']['device'],
+                mixer_control=self.config['audio']['mixer']['control'],
+                oled_manager=self.oled
+            )
+
+            self.hdmi = HDMIManager()
+
+            self.encoders = EncoderManager(
+                volume_pins=(
+                    self.config['gpio']['volume_encoder']['clk'],
+                    self.config['gpio']['volume_encoder']['dt'],
+                    self.config['gpio']['volume_encoder']['sw']
+                ),
+                sound_select_pins=(
+                    self.config['gpio']['sound_select_encoder']['clk'],
+                    self.config['gpio']['sound_select_encoder']['dt'],
+                    self.config['gpio']['sound_select_encoder']['sw']
+                )
+            )
+            self.control_locks = {
+                'volume': 0,
+                'sound_select': 0,
+                'toggle': 0
+            }
+
+            self.mqtt_client = mqtt.Client()
+            self.mqtt_client.on_connect = self.on_connect
+            self.mqtt_client.on_message = self.on_message
+            self.mqtt_client.on_disconnect = self.on_disconnect
+
+            self.current_sound_index = None
+            self.available_sounds = self.audio.get_available_sounds()
+            if not self.available_sounds:
+                self.logger.warning("No sound files found in audio directory")
             else:
-                state_tracker.doorbell_cameraPlayerArgs.append('--live')
-            state_tracker.doorbell_currentAudioFile = 0
+                for i in range(0, len(self.available_sounds)):
+                    if self.available_sounds[i] == self.config['audio']['default_sound']:
+                        self.current_sound_index = i
 
-            if state_tracker.amoled_enabled:
-                mqtt_client.camera_topic = amoled_config['topic']
+            self.setup_encoder_callbacks()
+
+            self.logger.info("System initialization complete")
+
+        except Exception as e:
+            self.logger.error(f"System initialization failed: {e}")
+            self.cleanup()
+            raise
+
+    def toggle_display(self):
+        """Toggle the display power state between on and off."""
+        if self._check_control_throttle('toggle'):
+            self.logger.debug("Display toggle throttled, skipping")
+            return
+            
+        if self.hdmi.get_display_power_state() == "off":
+            self.hdmi.play_video(self.config['video']['default_stream'])
         else:
-            mqtt_client.doorbell_topic = False
-            mqtt_client.camera_topic = False
+            self.hdmi.stop_video()
+
+    def setup_encoder_callbacks(self):
+        """Set up the callbacks for the encoders (volume and sound selection)."""
+        self.logger.debug("Setting up encoder callbacks")
         
-        mqtt_client.on_connect=state_tracker.mqtt_on_connect
-        mqtt_client.on_subscribe=state_tracker.mqtt_on_subscribe
-        mqtt_client.on_message=state_tracker.mqtt_on_message
-        mqtt_client.connect(mqtt_config['address'])
-        mqtt_client.loop_start()
-
-    if state_tracker.controls_enabled:
-        # set up front panel controls. initial values will be determined in the encoder object.
-        GPIO.setmode(GPIO.BCM)
-        renc1 = Encoder(
-            controls_config['rotaryEncoder1'][0]['leftPin'], 
-            controls_config['rotaryEncoder1'][0]['rightPin'], 
-            controls_config['rotaryEncoder1'][0]['switchPin'],
-            controls_config['rotaryEncoder1'][0]['rotaryFunction'],
-            controls_config['rotaryEncoder1'][0]['switchFunction'],
-            state_tracker,
-            device)
-        renc2 = Encoder(
-            controls_config['rotaryEncoder2'][0]['leftPin'], 
-            controls_config['rotaryEncoder2'][0]['rightPin'], 
-            controls_config['rotaryEncoder2'][0]['switchPin'], 
-            controls_config['rotaryEncoder2'][0]['rotaryFunction'],
-            controls_config['rotaryEncoder2'][0]['switchFunction'],
-            state_tracker,
-            device)
-
-        state_tracker.controlsLockCycles = 0
-        
-    # Main loop
-    while True:
-        time.sleep(0.0125)
-        if state_tracker.controls_enabled:
-            if state_tracker.controlsLockCycles > 0:
-                state_tracker.controlsLockCycles = state_tracker.controlsLockCycles - 1
-                state_tracker.must_refresh = True
-
-        # physical controls take precedence over the "normal" widget display, so don't take away the display lock if the controls haven't released it.
-        if state_tracker.oled_enabled and state_tracker.controlsLockCycles == 0:
-            # Advance the scrolling widgets.
-            for scroller in scrollers:
-                vars()[scroller].tick()
+        def volume_up_throttled():
+            """Throttle function for volume up action."""
+            if not self._check_control_throttle('volume'):
+                self.audio.adjust_volume(100)
                 
-            if state_tracker.must_refresh:
-                state_tracker.must_refresh = False
-                # clear the active scrolling widgets and reset the synchronizer.
-                for scroller in scrollers:
-                    del vars()[scroller]
-                scrollers = []
-                synchronizer = Synchronizer()
+        def volume_down_throttled():
+            """Throttle function for volume down action."""
+            if not self._check_control_throttle('volume'):
+                self.audio.adjust_volume(-100)
                 
-                # Arrange widgets on the ImageComposition, per the config. This is done one row at a time as follows:
-                #   - set the y-coordinate for the row.
-                #   - for each configured widget, call the WidgetFactory to create the widget content for eventual placement on the ImageComposition.
-                #   - place each widget according to column identifier (1-4):
-                #       - 1: left justified.
-                #       - 4: right justified.
-                #       - columns 2 and 3 make use of a little extra logic: if both exist, split them evenly across the center of the display. if only one is present, center it.
-                #   - position the widgets (icon + text) according to the x/y coordinates that have been determined.
-                #   - refresh the ImageComposition to make the new positions take effect.
-                #   - enable scrolling for widgets that declare as such in their config.
-                r = 0
-                for row in oled_config['arrangement'][0]:
-                    r += 1
-                    row_columns = len(vars()[row][0]['columns'][0])
-                    row_y = vars()[row][0]['y']
-                    for col in vars()[row][0]['columns'][0]:
-                        widget = vars()[row][0]['columns'][0][col]
-                        print(f"[main][{row}] column {col}: {widget}")
-                    
-                        vars()[widget] = WidgetFactory(device, image_composition, widget, oled_config[widget][0], vars()[row][0]['iconFont'], vars()[row][0]['textFont'], state_tracker)
-
-                        if col == "1":
-                            vars()[widget].icon_x = 0
-                        if col == "4":
-                            vars()[widget].icon_x = device.width - vars()[widget].widget_w
-                        
-                        if row_columns == 3:
-                            if col == "2":
-                                vars()[widget].icon_x = round(device.width * 0.25)
-                            if col == "3":
-                                vars()[widget].icon_x = round(device.width * 0.75 - vars()[widget].widget_w)
-                        elif col == "2" or col == "3":
-                            vars()[widget].icon_x = round(device.width * 0.5 - vars()[widget].widget_w * 0.5)
-                        
-                        vars()[widget].text_x += vars()[widget].icon_x
-                        
-                        if row_y > 0:
-                            s = (device.height - row_y) / (num_rows - 1)
-                            f = [row_y + s * i for i in range(num_rows)]
-                            r2 = r - 1
-                            vars()[widget].icon_y = round(f[r2] - vars()[widget].icon_h) 
-                            vars()[widget].text_y = round(f[r2] - vars()[widget].text_h)
-                            if vars()[widget].icon_h == 0:
-                                vars()[widget].icon_y = vars()[widget].text_y
-                        else:
-                            vars()[widget].icon_y = 0
-                            vars()[widget].text_y = 0
-
-                        print(f"[main][{row}][{widget}] placement: x: {vars()[widget].icon_x} y: {vars()[widget].icon_y}")
-                        vars()[widget].ci_icon.position = (vars()[widget].icon_x, vars()[widget].icon_y)
-                        vars()[widget].ci_text.position = (vars()[widget].text_x, vars()[widget].text_y)
-
-                        image_composition.refresh()
-                    
-                    if vars()[row][0]['scroll']:
-                        widget_scroller = widget + "_scroller"
-                        scrollers.append(widget_scroller)
-                        vars()[widget_scroller] = Scroller(image_composition,vars()[widget].ci_text,100,synchronizer)
-
-            # Draw the ImageComposition to the device, adding dividers between rows.
-            with canvas(device, background=image_composition()) as draw:
-                image_composition.refresh()
-                for row in oled_config['arrangement'][0]:
-                    row_y = vars()[row][0]['y'] - 2
-                    if row_y > 0:
-                        draw.line(((0,row_y),(device.width,row_y)),fill="white",width=1)
+        def volume_mute_throttled():
+            """Throttle function for volume mute toggle action."""
+            if not self._check_control_throttle('toggle'):
+                self.audio.toggle_mute()
         
-            # trigger an update to the clock widget if necessary.        
-            localTime = datetime.now().astimezone(tz.tzlocal())
-            clockTime = localTime.strftime(oled_config['clock'][0]['dateTimeFormat'])
-            if clockTime != clock.text:
-                state_tracker.must_refresh = True
+        self.encoders.setup_volume_callbacks(
+            volume_up=volume_up_throttled,
+            volume_down=volume_down_throttled,
+            volume_mute=volume_mute_throttled
+        )
+        
+        self.encoders.setup_sound_select_callbacks(
+            next_sound=self.next_sound,
+            prev_sound=self.prev_sound,
+            play_selected=self.toggle_display
+        )
+        
+    def _check_control_throttle(self, control_type='default'):
+        """Check and manage the throttle control for various actions.
 
-except KeyboardInterrupt:
-    pass
-except ValueError as err:
-    print(f"Error: {err}")
+        Args:
+            control_type (str): The type of control to check (e.g., 'volume', 'sound_select').
+
+        Returns:
+            bool: True if the control is currently throttled, False otherwise.
+        """
+        if control_type not in self.control_locks:
+            control_type = 'default'
+            
+        if self.control_locks.get(control_type, 0) > 0:
+            self.logger.debug(f"{control_type} control still locked ({self.control_locks[control_type]} cycles remaining)")
+            return True
+            
+        throttle_config = self.config['controls']['throttle']
+        throttle_period = throttle_config.get(control_type, throttle_config.get('default', 20))
+        
+        self.control_locks[control_type] = throttle_period
+        self.logger.debug(f"{control_type} control lock engaged for {throttle_period} cycles")
+        
+        return False
+
+    def next_sound(self):
+        """Select the next sound in the available sounds list."""
+        if self._check_control_throttle('sound_select'):
+            self.logger.debug("Sound selection throttled, skipping next sound")
+            return
+
+        if not self.available_sounds:
+            self.logger.warning("Cannot select next sound: no sounds available")
+            return
+            
+        self.current_sound_index = (self.current_sound_index + 1) % len(self.available_sounds)
+        filename = self.available_sounds[self.current_sound_index]
+        self.logger.info(f"Selected sound: {filename}")
+
+        self.oled.set_mode("centered_2line", "Select sound:", filename, duration=5)
+            
+    def prev_sound(self):
+        """Select the previous sound in the available sounds list."""
+        if self._check_control_throttle('sound_select'):
+            self.logger.debug("Sound selection throttled, skipping previous sound")
+            return
+
+        if not self.available_sounds:
+            self.logger.warning("Cannot select previous sound: no sounds available")
+            return
+            
+        self.current_sound_index = (self.current_sound_index - 1) % len(self.available_sounds)
+        filename = self.available_sounds[self.current_sound_index]
+        self.logger.info(f"Selected sound: {filename}")
+
+        self.oled.set_mode("centered_2line", "Select sound:", filename, duration=5)
+                        
+    def on_connect(self, client, userdata, flags, rc):
+        """Handle the MQTT connection event.
+
+        Args:
+            client: The MQTT client instance.
+            userdata: User data of the client.
+            flags: Response flags from the broker.
+            rc: Connection result code.
+        """
+        if rc == 0:
+            self.logger.info("Connected to MQTT broker")
+            topics = [
+                (self.config['mqtt']['topics']['doorbell'], 0),
+                (self.config['mqtt']['topics']['motion'], 0),
+                (self.config['mqtt']['topics']['message'], 0)
+            ]
+            client.subscribe(topics)
+            self.logger.info(f"Subscribed to topics: {[t[0] for t in topics]}")
+        else:
+            self.logger.error(f"Failed to connect to MQTT broker: {rc}")
+            
+    def on_disconnect(self, client, userdata, rc):
+        """Handle the MQTT disconnection event.
+
+        Args:
+            client: The MQTT client instance.
+            userdata: User data of the client.
+            rc: Disconnection result code.
+        """
+        if rc != 0:
+            self.logger.error(f"Unexpected MQTT disconnection: {rc}")
+        else:
+            self.logger.info("Disconnected from MQTT broker")
+            
+    def handle_event_message(self, topic, payload):
+        """Handle incoming event messages from MQTT.
+
+        Args:
+            topic (str): The MQTT topic of the message.
+            payload (dict): The message payload as a dictionary.
+        """
+        try:
+            if not isinstance(payload, dict):
+                self.logger.warning(f"Invalid payload format on {topic}: expected dict, got {type(payload)}")
+                return
+                
+            missing_fields = [f for f in ['active', 'timestamp', 'video_url'] if f not in payload]
+            if missing_fields:
+                self.logger.warning(f"Missing required fields in {topic} payload: {missing_fields}")
+                return
+                
+            try:
+                event_time = datetime.fromisoformat(payload['timestamp'])
+
+            except (ValueError, TypeError) as e:
+                self.logger.warning(f"Invalid timestamp format in {topic} payload: {payload['timestamp']}")
+                return
+                
+            self.logger.info(f"Event message: topic={topic}, active={payload['active']}, time={event_time}")
+            
+            if topic == self.config['mqtt']['topics']['motion']:
+                self.oled.update_motion_status(active=payload['active'], last_time=event_time)
+                if payload['active']:
+                    self.oled.set_temporary_message("Person detected on doorbell camera!")
+                else:
+                    self.oled.clear_temporary_message()
+            
+            if topic == self.config['mqtt']['topics']['doorbell']:
+                if payload['active']:
+                    self.oled.set_temporary_message("Someone's at the door!")
+                    sound_file = self.available_sounds[self.current_sound_index] or self.config['audio']['default_sound']
+                    self.audio.play_sound(sound_file)
+                    video_url = payload['video_url'] or self.config['video']['default_stream']
+                    self.hdmi.play_video(video_url)
+                else:
+                    self.oled.clear_temporary_message()
+                    self.hdmi.stop_video()
+                
+        except Exception as e:
+            self.logger.error(f"Error processing {topic} message: {e}")
+            self.logger.debug(f"Problematic payload: {payload}")
+            
+    def on_message(self, client, userdata, msg):
+        """Handle incoming MQTT messages.
+
+        Args:
+            client: The MQTT client instance.
+            userdata: User data of the client.
+            msg: The received message.
+        """
+        self.logger.debug(f"Received message on topic {msg.topic}")
+        try:
+            payload = json.loads(msg.payload.decode())
+            
+            if msg.topic in [self.config['mqtt']['topics']['doorbell'], 
+                           self.config['mqtt']['topics']['motion']]:
+                self.handle_event_message(msg.topic, payload)
+            elif msg.topic == self.config['mqtt']['topics']['message']:
+                self.handle_message(payload)
+                
+        except json.JSONDecodeError as e:
+            self.logger.warning(f"Invalid JSON received on topic {msg.topic}: {e}")
+            self.logger.debug(f"Raw payload: {msg.payload}")
+            
+    def handle_message(self, payload):
+        """Handle and display a message payload.
+
+        Args:
+            payload (dict): The message payload.
+        """
+        message = payload['text'] if isinstance(payload, dict) and 'text' in payload else str(payload)
+        self.logger.info(f"Displaying message: {message}")
+        self.oled.set_scrolling_message(message)
+        
+    def run(self):
+        """Run the main loop of the Smartchime system, processing events and messages."""
+        self.logger.info("Starting doorbell system")
+
+        mqtt_username = self.config['mqtt']['username']
+        mqtt_password = self.config['mqtt']['password']
+        
+        if mqtt_username and mqtt_password:
+            self.mqtt_client.username_pw_set(mqtt_username, mqtt_password)
+            self.logger.debug("Set MQTT authentication credentials")
+            
+        try:
+            self.mqtt_client.connect(
+                self.config['mqtt']['broker'],
+                self.config['mqtt']['port'],
+                60
+            )
+            self.mqtt_client.loop_start()
+                       
+            self.logger.info("System running")
+            while True:
+                self.oled.update_display()
+                for control_type in self.control_locks:
+                    if self.control_locks[control_type] > 0:
+                        self.control_locks[control_type] -= 1
+                        if self.control_locks[control_type] == 0:
+                            self.logger.debug(f"{control_type} control lock released")
+                time.sleep(0.0125)
+                
+        except KeyboardInterrupt:
+            self.logger.info("Received shutdown signal")
+            self.cleanup()
+
+        except Exception as e:
+            self.logger.error(f"Runtime error: {e}")
+            self.cleanup()
+            raise
+            
+    def _handle_airplay_metadata(self, artist, title, is_playing):
+        """Handle metadata updates from AirPlay.
+
+        Args:
+            artist (str): Name of the artist.
+            title (str): Title of the track.
+            is_playing (bool): Playback state.
+        """
+        try:
+            if is_playing and (artist or title):
+                display_text = ""
+                if artist and title:
+                    display_text = f"{title} - {artist}"
+                elif title:
+                    display_text = title
+                elif artist:
+                    display_text = artist
+                
+                if display_text:
+                    self.oled.set_temporary_message(display_text, duration=30)
+                    self.logger.debug(f"Updated display with AirPlay metadata: {display_text}")
+        except Exception as e:
+            self.logger.error(f"Error handling AirPlay metadata: {e}")
+
+    def cleanup(self):
+        """Clean up resources before shutting down."""
+        self.logger.info("Cleaning up system resources")
+        if self.mqtt_client:
+            self.mqtt_client.loop_stop()
+            self.mqtt_client.disconnect()
+        self.hdmi.stop_video()
+        self.oled.cleanup()
+        if hasattr(self, 'shairport'):
+            self.shairport.stop()
+            self.logger.info("Stopped Shairport metadata reader")
+        self.logger.info("Cleanup complete")
+
+if __name__ == "__main__":
+    try:
+        system = SmartchimeSystem()
+        system.run()
+
+    except Exception as e:
+        logging.getLogger(__name__).error(f"Fatal error: {e}")
+        raise

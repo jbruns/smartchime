@@ -1,0 +1,37 @@
+automation:
+  - alias: "[Smartchime] Motion Detected"
+    description: ""
+    triggers:
+      - entity_id:
+          - binary_sensor.front_door_person_occupancy
+        to: "on"
+        trigger: state
+    conditions: []
+    actions:
+      - data:
+          payload: >-
+            { "active": true, "timestamp": "{{ now().isoformat() }}", "video_url":
+            "http://camera.local/stream" }
+          topic: smartchime/motion/detected
+        action: mqtt.publish
+    mode: single
+
+  - alias: "[Smartchime] Motion Clear"
+    description: ""
+    triggers:
+      - entity_id:
+          - binary_sensor.front_door_person_occupancy
+        to: "off"
+        for:
+          seconds: 120
+        trigger: state
+    conditions: []
+    actions:
+      - data:
+          payload: >-
+            { "active": false, "timestamp": "{{ now().isoformat() }}", "video_url":
+            "" }
+          topic: smartchime/motion/detected
+          retain: true
+        action: mqtt.publish
+    mode: single
