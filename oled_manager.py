@@ -273,20 +273,33 @@ class OLEDManager:
         """Update scrolling text state."""
         if self.current_mode == self.MODE_CENTERED or not self.current_message:
             return
+
         current_time = time.time()
+
         if self.scroll_start_time is None:
             self.scroll_start_time = current_time
             return
+
         msg_width = self.scroll_font.getlength(self.current_message)
+
         if msg_width <= self.device.width:
+            # Message fits entirely on the display, no scrolling needed
+            self.scroll_position = 0
+            self.scroll_paused = True
+            self.scroll_start_time = current_time
             return
+
         if self.scroll_paused:
-            if current_time - self.scroll_start_time >= 2.0:
+            # Pause for 3 seconds before restarting the scroll
+            if current_time - self.scroll_start_time >= 3.0:
                 self.scroll_paused = False
                 self.scroll_position = 0
+                self.scroll_start_time = current_time
                 self.content_update_needed = True
         else:
-            if self.scroll_position >= msg_width + self.device.width:
+            # Scroll the message right to left
+            if self.scroll_position >= msg_width - self.device.width:
+                # End of message reached, pause scrolling
                 self.scroll_paused = True
                 self.scroll_start_time = current_time
             else:
