@@ -100,3 +100,9 @@ controls:
     
     # Default throttle for unspecified actions
     default: 20  # ~1000ms
+
+# Shairport Sync Integration
+shairport:
+  # Path to the shairport-sync metadata pipe
+  # Default: /tmp/shairport-sync-metadata
+  metadata_pipe: /tmp/shairport-sync-metadata

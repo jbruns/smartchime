@@ -1,6 +1,5 @@
 # Smartchime v2.0.0 Requirements
 paho-mqtt==1.6.1
-# pinned for compatibility with luma.oled 3.14.0
 pillow==10.4.0
 luma.oled==3.14.0
 python-vlc==3.0.21203
