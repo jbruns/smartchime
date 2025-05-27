@@ -1,0 +1,18 @@
+automation:
+  - alias: "[Smartchime] Update message from RSS"
+    description: ""
+    triggers:
+      - trigger: event
+        event_type: feedreader
+        event_data:
+          feed_url: https://feeds.feedburner.com/theysaidso/qod/inspire
+    conditions: []
+    actions:
+      - action: mqtt.publish
+        metadata: {}
+        data:
+          qos: "1"
+          retain: false
+          topic: smartchime/display/message
+          payload: "{ \"text\": \"{{ trigger.event.data.description }}\" }"
+    mode: single

@@ -121,6 +121,36 @@ Group=dietpi
 WantedBy=multi-user.target
 ```
 
+## Integrating with Home Assistant
+
+See the `examples/` directory for starter automations, which will publish the right MQTT events for Smartchime to react to.
+
+Note that you can (and probably should) control how long motion or doorbell events are treated as 'active' in Home Assistant, based on your specific needs. This means that, for example, if you only want the doorbell to be "rung" a maximum of every 10 seconds, instruct Home Assistant to wait until your doorbell sensor is out of the "ring" state for 10 seconds before setting Smartchime's doorbell event to 'false'.
+
+For the motion and doorbell events, a JSON payload is expected:
+
+```json
+{
+  "active": false,
+  "timestamp": "{{ now().isoformat() }}",
+  "video_url": "rtsp://camera/stream?user=abc&resolution=xyz"
+}
+```
+
+| Parameter | Type | Purpose |
+|-----------|------|---------|
+| active    | bool | Whether the motion or doorbell event should be treated as 'active'. |
+| timestamp | timedate | Generally, should be the template value `{{ now().isoformat() }}`, meaning the current time in ISO format. |
+| video_url | url | pointer to a relevant video clip, if one is available. If not specified, the default url specified in `config.yaml` will be used. |
+
+For the OLED message, either a raw non-JSON payload can be sent, or if you prefer:
+
+```json
+{
+  "text": "hello world"
+}
+```
+
 ## Acknowledgments
 
 - Shairport Sync for AirPlay support

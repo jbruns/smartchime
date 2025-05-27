@@ -1,0 +1,44 @@
+automation:
+  - alias: "[Smartchime] Doorbell Ring"
+    description: ""
+    triggers:
+      - entity_id:
+          - binary_sensor.front_door_doorbell_visitor
+        to: "on"
+        trigger: state
+    conditions: []
+    actions:
+      - data:
+          payload: >-
+            { "active": true, "timestamp": "{{ now().isoformat() }}", "video_url":
+            "http://camera.local/stream" }
+          topic: smartchime/doorbell/ring
+        action: mqtt.publish
+      - metadata: {}
+        data:
+          message: Doorbell ring!
+          title: Front Door
+        action: notify.all_mobile_devices
+    mode: single
+
+  - alias: "[Smartchime] Doorbell Clear"
+    description: ""
+    triggers:
+      - entity_id:
+          - binary_sensor.front_door_doorbell_visitor
+        to: "off"
+        for:
+          hours: 0
+          minutes: 1
+          seconds: 0
+        trigger: state
+    conditions: []
+    actions:
+      - data:
+          payload: >-
+            { "active": false, "timestamp": "{{ now().isoformat() }}", "video_url":
+            "" }
+          topic: smartchime/doorbell/ring
+          retain: true
+        action: mqtt.publish
+    mode: single
