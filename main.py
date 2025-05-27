@@ -109,6 +109,49 @@ CONFIG_SCHEMA = {
 }
 
 class SmartchimeSystem:
+    MQTT_PAYLOAD_SCHEMAS = {
+        "doorbell": {
+            "type": "object",
+            "properties": {
+                "active": {"type": "boolean"},
+                "timestamp": {"type": "string", "format": "date-time"},
+                "video_url": {"type": "string"}
+            },
+            "required": ["active", "timestamp", "video_url"]
+        },
+        "motion": {
+            "type": "object",
+            "properties": {
+                "active": {"type": "boolean"},
+                "timestamp": {"type": "string", "format": "date-time"},
+                "video_url": {"type": "string"}
+            },
+            "required": ["active", "timestamp", "video_url"]
+        },
+        "message": {
+            "type": "object",
+            "properties": {
+                "text": {"type": "string"}
+            },
+            "required": ["text"]
+        }
+    }
+
+    def validate_payload(self, topic, payload):
+        """Validate MQTT payload against its schema."""
+        schema = self.MQTT_PAYLOAD_SCHEMAS.get(topic)
+        if not schema:
+            self.logger.warning(f"No schema defined for topic: {topic}")
+            return False
+
+        try:
+            validate(instance=payload, schema=schema)
+            return True
+        except ValidationError as e:
+            self.logger.debug(f"Invalid payload for topic {topic}: {payload}")
+            self.logger.error(f"Validation error: {e.message}")
+            return False
+
     def __init__(self):
         """Initialize the Smartchime system and its components."""
         logging.basicConfig(
@@ -367,6 +410,10 @@ class SmartchimeSystem:
             topic (str): The MQTT topic of the message.
             payload (dict): The message payload as a dictionary.
         """
+        if not self.validate_payload(topic, payload):
+            self.logger.warning(f"Payload validation failed for topic {topic}")
+            return
+
         try:
             if not isinstance(payload, dict):
                 self.logger.warning(f"Invalid payload format on {topic}: expected dict, got {type(payload)}")
@@ -436,6 +483,10 @@ class SmartchimeSystem:
         Args:
             payload (dict): The message payload.
         """
+        if not self.validate_payload("message", payload):
+            self.logger.warning("Payload validation failed for message topic")
+            return
+
         message = payload['text'] if isinstance(payload, dict) and 'text' in payload else str(payload)
         self.logger.info(f"Displaying message: {message}")
         self.oled.set_scrolling_message(message)
