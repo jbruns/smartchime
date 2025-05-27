@@ -201,18 +201,27 @@ class SmartchimeSystem:
 
             self.hdmi = HDMIManager()
 
-            self.encoders = EncoderManager(
-                volume_pins=(
-                    self.config['gpio']['volume_encoder']['clk'],
-                    self.config['gpio']['volume_encoder']['dt'],
-                    self.config['gpio']['volume_encoder']['sw']
-                ),
-                sound_select_pins=(
-                    self.config['gpio']['sound_select_encoder']['clk'],
-                    self.config['gpio']['sound_select_encoder']['dt'],
-                    self.config['gpio']['sound_select_encoder']['sw']
+            self.gpio_enabled = True
+
+            try:
+                self.encoders = EncoderManager(
+                    volume_pins=(
+                        self.config['gpio']['volume_encoder']['clk'],
+                        self.config['gpio']['volume_encoder']['dt'],
+                        self.config['gpio']['volume_encoder']['sw']
+                    ),
+                    sound_select_pins=(
+                        self.config['gpio']['sound_select_encoder']['clk'],
+                        self.config['gpio']['sound_select_encoder']['dt'],
+                        self.config['gpio']['sound_select_encoder']['sw']
+                    )
                 )
-            )
+                self.logger.info("GPIO initialized successfully")
+            except Exception as e:
+                self.gpio_enabled = False
+                self.logger.warning(f"Failed to initialize GPIO: {e}")
+                self.logger.debug("Disabling GPIO-dependent controls")
+
             self.control_locks = {}
             self.lock_timers = {}
 
@@ -255,6 +264,10 @@ class SmartchimeSystem:
 
     def setup_encoder_callbacks(self):
         """Set up the callbacks for the encoders (volume and sound selection)."""
+        if not self.gpio_enabled:
+            self.logger.warning("Skipping encoder callback setup due to GPIO initialization failure")
+            return
+
         self.logger.debug("Setting up encoder callbacks")
         
         def volume_up_throttled():
