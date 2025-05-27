@@ -18,6 +18,7 @@ from datetime import datetime
 import paho.mqtt.client as mqtt
 import jsonschema
 from jsonschema import validate, ValidationError
+import threading
 
 from audio_manager import AudioManager
 from hdmi_manager import HDMIManager
@@ -169,11 +170,8 @@ class SmartchimeSystem:
                     self.config['gpio']['sound_select_encoder']['sw']
                 )
             )
-            self.control_locks = {
-                'volume': 0,
-                'sound_select': 0,
-                'toggle': 0
-            }
+            self.control_locks = {}
+            self.lock_timers = {}
 
             self.mqtt_client = mqtt.Client()
             self.mqtt_client.on_connect = self.on_connect
@@ -251,18 +249,35 @@ class SmartchimeSystem:
         """
         if control_type not in self.control_locks:
             control_type = 'default'
-            
-        if self.control_locks.get(control_type, 0) > 0:
-            self.logger.debug(f"{control_type} control still locked ({self.control_locks[control_type]} cycles remaining)")
-            return True
-            
+
+        last_action_time = self.control_locks.get(control_type, 0)
+        current_time = time.time() * 1000  # Convert to milliseconds
+
         throttle_config = self.config['controls']['throttle']
-        throttle_period = throttle_config.get(control_type, throttle_config.get('default', 20))
-        
-        self.control_locks[control_type] = throttle_period
-        self.logger.debug(f"{control_type} control lock engaged for {throttle_period} cycles")
-        
+        throttle_period_ms = throttle_config.get(control_type, throttle_config.get('default', 200))
+
+        if current_time - last_action_time < throttle_period_ms:
+            self.logger.debug(f"{control_type} control still locked (elapsed: {current_time - last_action_time} ms, required: {throttle_period_ms} ms)")
+            return True
+
+        self.control_locks[control_type] = current_time
+        self.logger.debug(f"{control_type} control lock engaged until {current_time + throttle_period_ms} ms")
+
         return False
+
+    def cleanup(self):
+        """Clean up resources before shutting down."""
+        self.logger.info("Cleaning up system resources")
+        if self.mqtt_client:
+            self.mqtt_client.loop_stop()
+            self.mqtt_client.disconnect()
+        self.hdmi.stop_video()
+        self.oled.cleanup()
+        if hasattr(self, 'shairport'):
+            self.shairport.stop()
+            self.logger.info("Stopped Shairport metadata reader")
+        self.control_locks.clear()  # Reset control locks
+        self.logger.info("Cleanup complete")
 
     def next_sound(self):
         """Select the next sound in the available sounds list."""
@@ -432,11 +447,6 @@ class SmartchimeSystem:
             self.logger.info("System running")
             while True:
                 self.oled.update_display()
-                for control_type in self.control_locks:
-                    if self.control_locks[control_type] > 0:
-                        self.control_locks[control_type] -= 1
-                        if self.control_locks[control_type] == 0:
-                            self.logger.debug(f"{control_type} control lock released")
                 time.sleep(0.0125)
                 
         except KeyboardInterrupt:
@@ -483,6 +493,7 @@ class SmartchimeSystem:
         if hasattr(self, 'shairport'):
             self.shairport.stop()
             self.logger.info("Stopped Shairport metadata reader")
+        self.control_locks.clear()  # Reset control locks
         self.logger.info("Cleanup complete")
 
 if __name__ == "__main__":
