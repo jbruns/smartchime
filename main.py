@@ -16,6 +16,8 @@ import time
 import yaml
 from datetime import datetime
 import paho.mqtt.client as mqtt
+import jsonschema
+from jsonschema import validate, ValidationError
 
 from audio_manager import AudioManager
 from hdmi_manager import HDMIManager
@@ -24,6 +26,86 @@ from encoder_manager import EncoderManager
 from shairport_metadata import ShairportMetadata
 
 __version__ = "2.0.0"
+
+CONFIG_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "displays": {
+            "type": "object",
+            "properties": {
+                "oled": {
+                    "type": "object",
+                    "properties": {
+                        "spi_port": {"type": "integer"},
+                        "spi_device": {"type": "integer"}
+                    },
+                    "required": ["spi_port", "spi_device"]
+                }
+            },
+            "required": ["oled"]
+        },
+        "audio": {
+            "type": "object",
+            "properties": {
+                "directory": {"type": "string"},
+                "mixer": {
+                    "type": "object",
+                    "properties": {
+                        "device": {"type": "string"},
+                        "control": {"type": "string"}
+                    },
+                    "required": ["device", "control"]
+                },
+                "default_sound": {"type": "string"}
+            },
+            "required": ["directory", "mixer", "default_sound"]
+        },
+        "gpio": {
+            "type": "object",
+            "properties": {
+                "volume_encoder": {
+                    "type": "object",
+                    "properties": {
+                        "clk": {"type": "integer"},
+                        "dt": {"type": "integer"},
+                        "sw": {"type": "integer"}
+                    },
+                    "required": ["clk", "dt", "sw"]
+                },
+                "sound_select_encoder": {
+                    "type": "object",
+                    "properties": {
+                        "clk": {"type": "integer"},
+                        "dt": {"type": "integer"},
+                        "sw": {"type": "integer"}
+                    },
+                    "required": ["clk", "dt", "sw"]
+                }
+            },
+            "required": ["volume_encoder", "sound_select_encoder"]
+        },
+        "mqtt": {
+            "type": "object",
+            "properties": {
+                "broker": {"type": "string"},
+                "port": {"type": "integer"},
+                "username": {"type": "string"},
+                "password": {"type": "string"},
+                "topics": {
+                    "type": "object",
+                    "properties": {
+                        "doorbell": {"type": "string"},
+                        "motion": {"type": "string"},
+                        "message": {"type": "string"}
+                    },
+                    "required": ["doorbell", "motion", "message"]
+                }
+            },
+            "required": ["broker", "port", "topics"]
+        }
+    },
+    "required": ["displays", "audio", "gpio", "mqtt"]
+}
 
 class SmartchimeSystem:
     def __init__(self):
@@ -38,8 +120,15 @@ class SmartchimeSystem:
         try:
             with open('config.yaml', 'r') as f:
                 self.config = yaml.safe_load(f)
-                self.logger.info("Configuration loaded successfully")
-
+                validate(instance=self.config, schema=CONFIG_SCHEMA)
+                self.logger.info("Configuration loaded and validated successfully")
+        except FileNotFoundError:
+            self.logger.error("Configuration file 'config.yaml' not found")
+            raise
+        except ValidationError as e:
+            self.logger.error(f"Configuration validation error: {e.message}")
+            self.logger.debug(f"Validation details: {e.schema_path}")
+            raise
         except Exception as e:
             self.logger.error(f"Failed to load configuration: {e}")
             raise
