@@ -1,14 +1,16 @@
-import time
 import logging
-from datetime import datetime, timezone
-from threading import Timer
+import time
+from datetime import UTC, datetime
 from os import path
+from threading import Timer
+
+import PIL
+from luma.core.image_composition import ComposableImage, ImageComposition
 from luma.core.interface.serial import spi
 from luma.core.render import canvas
-from luma.core.image_composition import ImageComposition, ComposableImage
 from luma.oled.device import ssd1306
 from PIL import Image, ImageDraw, ImageFont
-import PIL
+
 
 class OLEDManager:
     ICON_CLOCK = "\uf017"
@@ -32,24 +34,24 @@ class OLEDManager:
 
             # We're actually using an ssd1305-based display, so we need to accomodate the differences.
             # https://github.com/rm-hull/luma.oled/issues/309#issuecomment-2559715206
-            self.device.command(0xDA, 0x12) # Use alternate COM pin configuration
+            self.device.command(0xDA, 0x12)  # Use alternate COM pin configuration
             self.device._colstart += 4
             self.device._colend += 4
 
             self.composition = ImageComposition(self.device)
-            status_image = Image.new('1', (self.device.width, 10))
-            content_image = Image.new('1', (self.device.width, 22))
+            status_image = Image.new("1", (self.device.width, 10))
+            content_image = Image.new("1", (self.device.width, 22))
             self.status_layer = ComposableImage(status_image, position=(0, 0))
             self.content_layer = ComposableImage(content_image, position=(0, 10))
             self.composition.add_image(self.status_layer)
             self.composition.add_image(self.content_layer)
             self.logger.info(f"Initialized OLED display on SPI port {spi_port}, device {spi_device}")
             self.logger.info(f"Using PIL/Pillow version: {PIL.__version__}")
-        
+
         except Exception as e:
             self.logger.error(f"Failed to initialize OLED display: {e}")
             raise
-        
+
         try:
             font_dir = path.join(path.dirname(path.abspath(__file__)), "fonts")
             self.icon_font = ImageFont.truetype(path.join(font_dir, "fa-solid-900.ttf"), 8)
@@ -57,11 +59,11 @@ class OLEDManager:
             self.text_font = ImageFont.truetype(path.join(font_dir, "Dot Matrix Regular.ttf"), 10)
             self.scroll_font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 19)
             self.logger.info("Loaded display fonts")
-        
+
         except Exception as e:
             self.logger.error(f"Failed to load fonts: {e}", exc_info=True)
             raise
-        
+
         self.current_mode = self.MODE_DEFAULT
         self.current_message = ""
         self.temp_message = None
@@ -90,27 +92,27 @@ class OLEDManager:
         """
         if mode not in [self.MODE_DEFAULT, self.MODE_CENTERED]:
             raise ValueError(f"Invalid mode: {mode}")
-        
+
         self._cancel_temp_message()
-        
+
         if self.current_mode != mode:
             self._clear_display()
-        
+
         self.current_mode = mode
-        
+
         if mode == self.MODE_CENTERED:
             self.line1 = line1
             self.line2 = line2
             self.scroll_position = 0
             self.scroll_start_time = None
-        
+
             if duration:
                 if self.mode_timer:
                     self.mode_timer.cancel()
-        
+
                 self.mode_timer = Timer(duration, self._revert_to_default)
                 self.mode_timer.start()
-        
+
         self.status_update_needed = True
         self.content_update_needed = True
 
@@ -122,7 +124,7 @@ class OLEDManager:
         """
         if self.current_mode != self.MODE_DEFAULT:
             return
-        
+
         self.current_message = message
         self.scroll_position = 0
         self.scroll_start_time = None
@@ -138,19 +140,19 @@ class OLEDManager:
         """
         if self.current_mode != self.MODE_DEFAULT:
             return
-        
+
         if not self.temp_message:
             self.original_message = self.current_message
-        
+
         self.temp_message = message
         self.current_message = message
         self.scroll_position = 0
         self.scroll_start_time = None
         self.scroll_paused = False
         self.content_update_needed = True
-        
+
         self._cancel_temp_message()
-        
+
         if duration:
             self.temp_timer = Timer(duration, self._restore_original_message)
             self.temp_timer.start()
@@ -159,7 +161,7 @@ class OLEDManager:
         """Clear the temporary scrolling message."""
         if self.current_mode != self.MODE_DEFAULT:
             return
-        
+
         self._cancel_temp_message()
         self._restore_original_message()
 
@@ -196,12 +198,12 @@ class OLEDManager:
     def _clear_display(self):
         """Clear the OLED display."""
         with canvas(self.device) as draw:
-            draw.rectangle((0, 0, self.device.width-1, self.device.height-1), outline=0, fill=0)
+            draw.rectangle((0, 0, self.device.width - 1, self.device.height - 1), outline=0, fill=0)
 
     def _update_status_bar(self):
         """Update the status bar section."""
         try:
-            status_image = Image.new('1', (self.device.width, 10))
+            status_image = Image.new("1", (self.device.width, 10))
             draw = ImageDraw.Draw(status_image)
             current_time = datetime.now().strftime("%a %m/%d %-I:%M%p")
             icon_width = self.icon_font.getlength(self.ICON_CLOCK)
@@ -215,15 +217,15 @@ class OLEDManager:
             motion_x = self.device.width - (motion_icon_width + 2 + motion_text_width)
             draw.text((motion_x, 0), self.ICON_WALKING, font=self.icon_font, fill="white")
             draw.text((motion_x + motion_icon_width + 2, 0), motion_text, font=self.status_font, fill="white")
-            draw.line([(0, 9), (self.device.width-1, 9)], fill="white", width=1)
+            draw.line([(0, 9), (self.device.width - 1, 9)], fill="white", width=1)
             self.status_layer.image = status_image
             for layer in [self.status_layer, self.content_layer]:
-                if hasattr(layer, 'image') and layer.image is not None:
+                if hasattr(layer, "image") and layer.image is not None:
                     if not isinstance(layer.image, Image.Image):
-                        layer.image = Image.new('1', (self.device.width, layer.height), 0)
+                        layer.image = Image.new("1", (self.device.width, layer.height), 0)
                 else:
                     self.logger.warning(f"Missing image in layer: {layer}")
-                    layer.image = Image.new('1', (self.device.width, layer.height), 0)
+                    layer.image = Image.new("1", (self.device.width, layer.height), 0)
             with canvas(self.device, background=self.composition()) as draw:
                 self.composition.refresh()
             self.status_update_needed = False
@@ -233,7 +235,7 @@ class OLEDManager:
     def _update_content_area(self):
         """Update the main content area."""
         try:
-            content_image = Image.new('1', (self.device.width, 22))
+            content_image = Image.new("1", (self.device.width, 22))
             draw = ImageDraw.Draw(content_image)
             if self.current_mode == self.MODE_CENTERED:
                 self._draw_centered_text(draw)
@@ -329,7 +331,7 @@ class OLEDManager:
             return "now"
         if self.last_motion_time is None:
             return "--"
-        delta = datetime.now(timezone.utc) - self.last_motion_time
+        delta = datetime.now(UTC) - self.last_motion_time
         minutes = int(delta.total_seconds() / 60)
         if minutes < 60:
             return f"{minutes}m"

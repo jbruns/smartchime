@@ -99,7 +99,19 @@ It may be best to create a venv given the various requirements Smartchime has:
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
-pip3 install -r requirements.txt
+pip install ".[hw]"
+```
+
+For local development (linting, testing — no hardware packages):
+
+```bash
+pip install -e ".[dev]"
+```
+
+For development on the Pi (with hardware packages):
+
+```bash
+pip install -e ".[dev,hw]"
 ```
 
 Finally, you may wish to start the Smartchime code on boot. Here's a suggested systemd service (make sure to adjust paths as necessary):
@@ -112,7 +124,7 @@ After=network.target
 [Service]
 type=exec
 WorkingDirectory=/home/dietpi/smartchime
-ExecStart=/home/dietpi/smartchime/.venv/bin/python /home/dietpi/smartchime/main.py
+ExecStart=/home/dietpi/smartchime/.venv/bin/python -m smartchime
 Restart=always
 User=dietpi
 Group=dietpi

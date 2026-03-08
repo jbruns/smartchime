@@ -1,10 +1,12 @@
-import os
-import alsaaudio
 import logging
+import os
 from pathlib import Path
 
+import alsaaudio
+
+
 class AudioManager:
-    def __init__(self, audio_dir, mixer_device='default', mixer_control='Digital', oled_manager=None):
+    def __init__(self, audio_dir, mixer_device="default", mixer_control="Digital", oled_manager=None):
         self.logger = logging.getLogger(__name__)
         self.audio_dir = Path(audio_dir)
         self.oled = oled_manager

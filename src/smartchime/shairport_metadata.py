@@ -1,7 +1,8 @@
-import os
 import logging
+import os
 import xml.etree.ElementTree as ET
-from threading import Thread, Event
+from threading import Event, Thread
+
 
 class ShairportMetadata:
     """Reads and parses metadata from a shairport-sync metadata pipe.
@@ -67,18 +68,18 @@ class ShairportMetadata:
     def _read_metadata_loop(self):
         """Main loop for reading and parsing metadata from the pipe."""
         try:
-            with open(self.pipe_path, 'rb', buffering=0) as pipe:
+            with open(self.pipe_path, "rb", buffering=0) as pipe:
                 buffer = ""
                 while not self._stop_event.is_set():
-                    char = pipe.read(1).decode('utf-8', errors='ignore')
-                    if char == '':  # EOF
+                    char = pipe.read(1).decode("utf-8", errors="ignore")
+                    if char == "":  # EOF
                         if self.is_playing:
                             self.is_playing = False
                             self._notify_callbacks()
                         continue
 
                     buffer += char
-                    if '</item>' in buffer:
+                    if "</item>" in buffer:
                         try:
                             self._parse_metadata(buffer)
                         except ET.ParseError:
@@ -98,26 +99,26 @@ class ShairportMetadata:
         """
         try:
             root = ET.fromstring(xml_str)
-            
+
             # Check for playback state changes
-            if root.get('type') == 'ssnc' and root.findtext('code') == 'pbeg':
+            if root.get("type") == "ssnc" and root.findtext("code") == "pbeg":
                 self.is_playing = True
                 self._notify_callbacks()
                 return
-            elif root.get('type') == 'ssnc' and root.findtext('code') in ['pend', 'prgr']:
+            elif root.get("type") == "ssnc" and root.findtext("code") in ["pend", "prgr"]:
                 self.is_playing = False
                 self._notify_callbacks()
                 return
 
             # Parse metadata items
-            if root.get('type') == 'core':
-                code = root.findtext('code')
-                data = root.findtext('data')
-                
-                if code == 'asar' and data:  # Artist
+            if root.get("type") == "core":
+                code = root.findtext("code")
+                data = root.findtext("data")
+
+                if code == "asar" and data:  # Artist
                     self.current_artist = data
                     self._notify_callbacks()
-                elif code == 'minm' and data:  # Title
+                elif code == "minm" and data:  # Title
                     self.current_title = data
                     self._notify_callbacks()
 

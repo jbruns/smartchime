@@ -1,0 +1,67 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "smartchime"
+version = "2.0.0"
+description = "A smart doorbell system for Raspberry Pi 4B"
+readme = "README.md"
+requires-python = ">=3.11"
+license = "MIT"
+dependencies = [
+    "paho-mqtt==1.6.1",
+    "pillow==10.4.0",
+    "PyYAML==6.0.1",
+]
+
+[project.optional-dependencies]
+hw = [
+    "luma.oled==3.14.0",
+    "python-vlc==3.0.21203",
+    "gpiozero==2.0",
+    "rpi-lgpio==0.6",
+    "vcgencmd==0.1.1",
+    "pyalsaaudio==0.9.2",
+]
+dev = [
+    "ruff>=0.9",
+    "pytest>=8",
+    "pytest-mock>=3",
+    "pre-commit>=4",
+]
+
+[project.scripts]
+smartchime = "smartchime.main:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/smartchime"]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 120
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = [
+    "E",    # pycodestyle errors
+    "W",    # pycodestyle warnings
+    "F",    # pyflakes
+    "I",    # isort
+    "UP",   # pyupgrade
+    "B",    # flake8-bugbear
+    "SIM",  # flake8-simplify
+    "LOG",  # flake8-logging
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["smartchime"]
+
+[tool.ruff.format]
+quote-style = "double"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "hardware: tests requiring Raspberry Pi hardware (deselect with '-m \"not hardware\"')",
+]
