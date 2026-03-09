@@ -2,6 +2,7 @@ import json
 import logging
 import time
 from datetime import datetime
+from threading import Lock
 
 import paho.mqtt.client as mqtt
 import yaml
@@ -75,7 +76,8 @@ class SmartchimeSystem:
                     self.config["gpio"]["sound_select_encoder"]["sw"],
                 ),
             )
-            self.control_locks = {"volume": 0, "sound_select": 0, "toggle": 0}
+            self.control_locks = {"volume": 0.0, "sound_select": 0.0, "toggle": 0.0}
+            self._throttle_lock = Lock()
 
             self.mqtt_client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)
             self.mqtt_client.on_connect = self.on_connect
@@ -141,6 +143,9 @@ class SmartchimeSystem:
     def _check_control_throttle(self, control_type="default"):
         """Check and manage the throttle control for various actions.
 
+        Uses time.monotonic() for frame-rate-independent throttling.
+        Throttle periods in config are in seconds.
+
         Args:
             control_type (str): The type of control to check (e.g., 'volume', 'sound_select').
 
@@ -150,18 +155,22 @@ class SmartchimeSystem:
         if control_type not in self.control_locks:
             control_type = "default"
 
-        if self.control_locks.get(control_type, 0) > 0:
-            remaining = self.control_locks[control_type]
-            self.logger.debug(f"{control_type} control still locked ({remaining} cycles remaining)")
-            return True
+        now = time.monotonic()
 
-        throttle_config = self.config["controls"]["throttle"]
-        throttle_period = throttle_config.get(control_type, throttle_config.get("default", 20))
+        with self._throttle_lock:
+            last_action = self.control_locks.get(control_type, 0.0)
+            throttle_config = self.config["controls"]["throttle"]
+            throttle_period = throttle_config.get(control_type, throttle_config.get("default", 0.4))
 
-        self.control_locks[control_type] = throttle_period
-        self.logger.debug(f"{control_type} control lock engaged for {throttle_period} cycles")
+            if now - last_action < throttle_period:
+                remaining = throttle_period - (now - last_action)
+                self.logger.debug(f"{control_type} control still locked ({remaining:.2f}s remaining)")
+                return True
 
-        return False
+            self.control_locks[control_type] = now
+            self.logger.debug(f"{control_type} control lock engaged for {throttle_period}s")
+
+            return False
 
     def next_sound(self):
         """Select the next sound in the available sounds list."""
@@ -331,11 +340,6 @@ class SmartchimeSystem:
             self.logger.info("System running")
             while True:
                 self.oled.update_display()
-                for control_type in self.control_locks:
-                    if self.control_locks[control_type] > 0:
-                        self.control_locks[control_type] -= 1
-                        if self.control_locks[control_type] == 0:
-                            self.logger.debug(f"{control_type} control lock released")
                 time.sleep(0.0125)
 
         except KeyboardInterrupt:
@@ -377,7 +381,7 @@ class SmartchimeSystem:
         if self.mqtt_client:
             self.mqtt_client.loop_stop()
             self.mqtt_client.disconnect()
-        self.hdmi.stop_video()
+        self.hdmi.cleanup()
         self.oled.cleanup()
         if hasattr(self, "shairport"):
             self.shairport.stop()

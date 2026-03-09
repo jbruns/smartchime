@@ -87,19 +87,19 @@ gpio:
     
 # Control Input Throttling Configuration
 controls:
-  # Throttle periods in main loop cycles (~50ms each)
+  # Throttle periods in seconds (time-based, independent of frame rate)
   throttle:
     # Volume adjustment throttling
-    volume: 10  # ~500ms between volume changes
+    volume: 0.15  # 150ms between volume changes
     
     # Sound selection throttling
-    sound_select: 20  # ~1000ms between sound selections
+    sound_select: 0.4  # 400ms between sound selections
     
     # Toggle actions (mute, display) throttling
-    toggle: 40  # ~2000ms between toggles
+    toggle: 1.0  # 1s between toggles
     
     # Default throttle for unspecified actions
-    default: 20  # ~1000ms
+    default: 0.4  # 400ms
 
 # Shairport Sync Integration
 shairport:

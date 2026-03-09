@@ -1,60 +1,41 @@
 import logging
 
 from gpiozero import Button
+from gpiozero import RotaryEncoder as GpioRotaryEncoder
 
 
 class RotaryEncoder:
+    BUTTON_BOUNCE_TIME = 0.05
+
     def __init__(self, clk_pin, dt_pin, sw_pin):
         """Initialize a rotary encoder with GPIO pins.
 
+        Uses gpiozero's RotaryEncoder for proper hardware quadrature decoding
+        with built-in debouncing, and a separate Button for the push switch.
+
         Args:
-            clk_pin (int): GPIO pin for the clock signal.
-            dt_pin (int): GPIO pin for the data signal.
+            clk_pin (int): GPIO pin for the clock signal (channel A).
+            dt_pin (int): GPIO pin for the data signal (channel B).
             sw_pin (int): GPIO pin for the button signal.
         """
         self.logger = logging.getLogger(__name__)
-        self.callback_cw = None
-        self.callback_ccw = None
-        self.callback_button = None
 
         try:
-            self.clk = Button(clk_pin)
-            self.dt = Button(dt_pin)
-            self.sw = Button(sw_pin)
-
+            self.encoder = GpioRotaryEncoder(clk_pin, dt_pin, max_steps=0)
+            self.sw = Button(sw_pin, bounce_time=self.BUTTON_BOUNCE_TIME)
             self.logger.info(f"Initialized rotary encoder on pins CLK:{clk_pin}, DT:{dt_pin}, SW:{sw_pin}")
         except Exception as e:
             self.logger.error(f"Failed to setup GPIO pins for rotary encoder: {e}")
             raise
 
-        self.clk_last_state = self.clk.value
-
-        self.clk.when_pressed = self._rotation_callback
-        self.clk.when_released = self._rotation_callback
+        self._callback_button = None
         self.sw.when_pressed = self._button_callback
-
-    def _rotation_callback(self):
-        """Handle rotation events and trigger appropriate callbacks."""
-        clk_state = self.clk.value
-        dt_state = self.dt.value
-
-        if clk_state != self.clk_last_state:
-            if dt_state != clk_state:
-                if self.callback_cw:
-                    self.logger.debug("Encoder rotated clockwise")
-                    self.callback_cw()
-            else:
-                if self.callback_ccw:
-                    self.logger.debug("Encoder rotated counter-clockwise")
-                    self.callback_ccw()
-
-        self.clk_last_state = clk_state
 
     def _button_callback(self):
         """Handle button press events and trigger the button callback."""
-        if self.callback_button:
+        if self._callback_button:
             self.logger.debug("Encoder button pressed")
-            self.callback_button()
+            self._callback_button()
 
     def set_callbacks(self, callback_cw, callback_ccw, callback_button):
         """Set the callbacks for clockwise, counter-clockwise, and button press events.
@@ -64,9 +45,9 @@ class RotaryEncoder:
             callback_ccw (callable): Function to call on counter-clockwise rotation.
             callback_button (callable): Function to call on button press.
         """
-        self.callback_cw = callback_cw
-        self.callback_ccw = callback_ccw
-        self.callback_button = callback_button
+        self._callback_button = callback_button
+        self.encoder.when_rotated_clockwise = callback_cw
+        self.encoder.when_rotated_counter_clockwise = callback_ccw
         self.logger.debug("Encoder callbacks configured")
 
 

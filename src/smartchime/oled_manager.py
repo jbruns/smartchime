@@ -2,7 +2,7 @@ import logging
 import time
 from datetime import UTC, datetime
 from os import path
-from threading import Timer
+from threading import RLock, Timer
 
 import PIL
 from luma.core.image_composition import ComposableImage, ImageComposition
@@ -20,6 +20,12 @@ class OLEDManager:
     MODE_DEFAULT = "default"
     MODE_CENTERED = "centered_2line"
 
+    SCROLL_SPEED_PPS = 45
+    MAX_SCROLL_MESSAGE_LENGTH = 500
+    BURN_IN_REFRESH_INTERVAL = 300
+    BURN_IN_SLIDE_FRAMES = 8
+    BURN_IN_BLANK_FRAMES = 4
+
     def __init__(self, spi_port=0, spi_device=0):
         """Initialize the OLED display manager.
 
@@ -28,6 +34,8 @@ class OLEDManager:
             spi_device (int): SPI device number.
         """
         self.logger = logging.getLogger(__name__)
+        self._state_lock = RLock()
+
         try:
             serial = spi(port=spi_port, device=spi_device)
             self.device = ssd1306(serial, width=128, height=32)
@@ -81,6 +89,17 @@ class OLEDManager:
         self.status_update_needed = True
         self.content_update_needed = True
 
+        # Scroll performance: cached message width
+        self._cached_msg_width = 0
+        self._last_rendered_scroll_pos = -1
+
+        # Burn-in prevention state
+        self._last_burn_in_refresh = time.monotonic()
+        self._refresh_state = None
+        self._refresh_frame = 0
+        self._burn_in_cycle_count = 0
+        self._status_y_offset = 0
+
     def set_mode(self, mode, line1="", line2="", duration=None):
         """Set the display mode and content.
 
@@ -93,28 +112,29 @@ class OLEDManager:
         if mode not in [self.MODE_DEFAULT, self.MODE_CENTERED]:
             raise ValueError(f"Invalid mode: {mode}")
 
-        self._cancel_temp_message()
+        with self._state_lock:
+            self._cancel_temp_message()
 
-        if self.current_mode != mode:
-            self._clear_display()
+            if self.current_mode != mode:
+                self._clear_display()
 
-        self.current_mode = mode
+            self.current_mode = mode
 
-        if mode == self.MODE_CENTERED:
-            self.line1 = line1
-            self.line2 = line2
-            self.scroll_position = 0
-            self.scroll_start_time = None
+            if mode == self.MODE_CENTERED:
+                self.line1 = line1
+                self.line2 = line2
+                self.scroll_position = 0
+                self.scroll_start_time = None
 
-            if duration:
-                if self.mode_timer:
-                    self.mode_timer.cancel()
+                if duration:
+                    if self.mode_timer:
+                        self.mode_timer.cancel()
 
-                self.mode_timer = Timer(duration, self._revert_to_default)
-                self.mode_timer.start()
+                    self.mode_timer = Timer(duration, self._revert_to_default)
+                    self.mode_timer.start()
 
-        self.status_update_needed = True
-        self.content_update_needed = True
+            self.status_update_needed = True
+            self.content_update_needed = True
 
     def set_scrolling_message(self, message):
         """Set the scrolling message for default mode.
@@ -122,14 +142,21 @@ class OLEDManager:
         Args:
             message (str): Message to scroll.
         """
-        if self.current_mode != self.MODE_DEFAULT:
-            return
+        with self._state_lock:
+            if self.current_mode != self.MODE_DEFAULT:
+                return
 
-        self.current_message = message
-        self.scroll_position = 0
-        self.scroll_start_time = None
-        self.scroll_paused = False
-        self.content_update_needed = True
+            if len(message) > self.MAX_SCROLL_MESSAGE_LENGTH:
+                self.logger.warning(f"Message truncated from {len(message)} to {self.MAX_SCROLL_MESSAGE_LENGTH} chars")
+                message = message[: self.MAX_SCROLL_MESSAGE_LENGTH - 1] + "…"
+
+            self.current_message = message
+            self._cached_msg_width = self.scroll_font.getlength(message) if message else 0
+            self.scroll_position = 0
+            self.scroll_start_time = None
+            self.scroll_paused = False
+            self._last_rendered_scroll_pos = -1
+            self.content_update_needed = True
 
     def set_temporary_message(self, message, duration=None):
         """Set a temporary scrolling message with auto-revert.
@@ -138,32 +165,42 @@ class OLEDManager:
             message (str): Temporary message to display.
             duration (float): Duration before reverting.
         """
-        if self.current_mode != self.MODE_DEFAULT:
-            return
+        with self._state_lock:
+            if self.current_mode != self.MODE_DEFAULT:
+                return
 
-        if not self.temp_message:
-            self.original_message = self.current_message
+            if len(message) > self.MAX_SCROLL_MESSAGE_LENGTH:
+                self.logger.warning(
+                    f"Temp message truncated from {len(message)} to {self.MAX_SCROLL_MESSAGE_LENGTH} chars"
+                )
+                message = message[: self.MAX_SCROLL_MESSAGE_LENGTH - 1] + "…"
 
-        self.temp_message = message
-        self.current_message = message
-        self.scroll_position = 0
-        self.scroll_start_time = None
-        self.scroll_paused = False
-        self.content_update_needed = True
+            if not self.temp_message:
+                self.original_message = self.current_message
 
-        self._cancel_temp_message()
+            self.temp_message = message
+            self.current_message = message
+            self._cached_msg_width = self.scroll_font.getlength(message) if message else 0
+            self.scroll_position = 0
+            self.scroll_start_time = None
+            self.scroll_paused = False
+            self._last_rendered_scroll_pos = -1
+            self.content_update_needed = True
 
-        if duration:
-            self.temp_timer = Timer(duration, self._restore_original_message)
-            self.temp_timer.start()
+            self._cancel_temp_message()
+
+            if duration:
+                self.temp_timer = Timer(duration, self._restore_original_message)
+                self.temp_timer.start()
 
     def clear_temporary_message(self):
         """Clear the temporary scrolling message."""
-        if self.current_mode != self.MODE_DEFAULT:
-            return
+        with self._state_lock:
+            if self.current_mode != self.MODE_DEFAULT:
+                return
 
-        self._cancel_temp_message()
-        self._restore_original_message()
+            self._cancel_temp_message()
+            self._restore_original_message()
 
     def update_motion_status(self, active=None, last_time=None):
         """Update motion detection status.
@@ -172,27 +209,46 @@ class OLEDManager:
             active (bool): Current motion state.
             last_time (datetime): Time of last detected motion.
         """
-        update_needed = False
-        if active is not None and active != self.motion_active:
-            self.motion_active = active
-            update_needed = True
-        if last_time is not None and last_time != self.last_motion_time:
-            self.last_motion_time = last_time
-            update_needed = True
-        if update_needed:
-            self.status_update_needed = True
+        with self._state_lock:
+            update_needed = False
+            if active is not None and active != self.motion_active:
+                self.motion_active = active
+                update_needed = True
+            if last_time is not None and last_time != self.last_motion_time:
+                self.last_motion_time = last_time
+                update_needed = True
+            if update_needed:
+                self.status_update_needed = True
 
     def update_display(self):
         """Update the display, optimizing updates by section."""
-        current_time = datetime.now()
-        if self.current_mode == self.MODE_DEFAULT and current_time.minute != self.last_minute:
-            self.status_update_needed = True
-            self.last_minute = current_time.minute
-        if self.status_update_needed:
+        with self._state_lock:
+            # Handle burn-in refresh animation (runs independently of normal updates)
+            if self._refresh_state is not None:
+                self._animate_refresh()
+                return
+
+            # Check if burn-in refresh is due
+            now = time.monotonic()
+            if now - self._last_burn_in_refresh >= self.BURN_IN_REFRESH_INTERVAL:
+                self._start_burn_in_refresh()
+                return
+
+            current_time = datetime.now()
+            if self.current_mode == self.MODE_DEFAULT and current_time.minute != self.last_minute:
+                self.status_update_needed = True
+                self.last_minute = current_time.minute
+
+            should_update_status = self.status_update_needed
+            should_update_content = self.content_update_needed
+            mode = self.current_mode
+            has_message = bool(self.current_message)
+
+        if should_update_status:
             self._update_status_bar()
-        if self.content_update_needed:
+        if should_update_content:
             self._update_content_area()
-        if self.current_mode == self.MODE_DEFAULT and self.current_message:
+        if mode == self.MODE_DEFAULT and has_message:
             self._update_scroll_state()
 
     def _clear_display(self):
@@ -205,18 +261,19 @@ class OLEDManager:
         try:
             status_image = Image.new("1", (self.device.width, 10))
             draw = ImageDraw.Draw(status_image)
+            y_off = self._status_y_offset
             current_time = datetime.now().strftime("%a %m/%d %-I:%M%p")
             icon_width = self.icon_font.getlength(self.ICON_CLOCK)
-            draw.text((0, 0), self.ICON_CLOCK, font=self.icon_font, fill="white")
-            draw.text((icon_width + 2, 0), current_time, font=self.status_font, fill="white")
+            draw.text((0, y_off), self.ICON_CLOCK, font=self.icon_font, fill="white")
+            draw.text((icon_width + 2, y_off), current_time, font=self.status_font, fill="white")
             sep_x = int(self.device.width * 0.75)
-            draw.line([(sep_x, 0), (sep_x, 8)], fill="white", width=1)
+            draw.line([(sep_x, y_off), (sep_x, 8 + y_off)], fill="white", width=1)
             motion_text = self._format_motion_time()
             motion_icon_width = self.icon_font.getlength(self.ICON_WALKING)
             motion_text_width = self.status_font.getlength(motion_text)
             motion_x = self.device.width - (motion_icon_width + 2 + motion_text_width)
-            draw.text((motion_x, 0), self.ICON_WALKING, font=self.icon_font, fill="white")
-            draw.text((motion_x + motion_icon_width + 2, 0), motion_text, font=self.status_font, fill="white")
+            draw.text((motion_x, y_off), self.ICON_WALKING, font=self.icon_font, fill="white")
+            draw.text((motion_x + motion_icon_width + 2, y_off), motion_text, font=self.status_font, fill="white")
             draw.line([(0, 9), (self.device.width - 1, 9)], fill="white", width=1)
             self.status_layer.image = status_image
             for layer in [self.status_layer, self.content_layer]:
@@ -263,37 +320,44 @@ class OLEDManager:
         """Draw scrolling text."""
         if self.current_mode == self.MODE_CENTERED or not self.current_message:
             return
-        msg_width = self.scroll_font.getlength(self.current_message)
+        msg_width = self._cached_msg_width
         if msg_width <= self.device.width:
             x_pos = (self.device.width - msg_width) // 2
+        elif self.scroll_paused:
+            x_pos = self.device.width - self.scroll_position
         else:
-            if not self.scroll_paused:
-                x_pos = self.device.width - self.scroll_position
+            x_pos = self.device.width - self.scroll_position
         draw.text((x_pos, 0), self.current_message, font=self.scroll_font, fill="white")
 
     def _update_scroll_state(self):
-        """Update scrolling text state."""
-        if self.current_mode == self.MODE_CENTERED or not self.current_message:
-            return
-        current_time = time.time()
-        if self.scroll_start_time is None:
-            self.scroll_start_time = current_time
-            return
-        msg_width = self.scroll_font.getlength(self.current_message)
-        if msg_width <= self.device.width:
-            return
-        if self.scroll_paused:
-            if current_time - self.scroll_start_time >= 2.0:
-                self.scroll_paused = False
-                self.scroll_position = 0
-                self.content_update_needed = True
-        else:
-            if self.scroll_position >= msg_width + self.device.width:
-                self.scroll_paused = True
+        """Update scrolling text state using time-based positioning."""
+        with self._state_lock:
+            if self.current_mode == self.MODE_CENTERED or not self.current_message:
+                return
+            current_time = time.monotonic()
+            if self.scroll_start_time is None:
                 self.scroll_start_time = current_time
+                return
+            msg_width = self._cached_msg_width
+            if msg_width <= self.device.width:
+                return
+            if self.scroll_paused:
+                if current_time - self.scroll_start_time >= 2.0:
+                    self.scroll_paused = False
+                    self.scroll_position = 0
+                    self.scroll_start_time = current_time
+                    self._last_rendered_scroll_pos = -1
+                    self.content_update_needed = True
             else:
-                self.scroll_position += 1
-                self.content_update_needed = True
+                elapsed = current_time - self.scroll_start_time
+                new_position = int(elapsed * self.SCROLL_SPEED_PPS)
+                if new_position >= msg_width + self.device.width:
+                    self.scroll_paused = True
+                    self.scroll_start_time = current_time
+                elif new_position != self._last_rendered_scroll_pos:
+                    self.scroll_position = new_position
+                    self._last_rendered_scroll_pos = new_position
+                    self.content_update_needed = True
 
     def _truncate_text(self, text, max_width, draw):
         """Truncate text to fit width, adding ellipsis if needed.
@@ -339,20 +403,24 @@ class OLEDManager:
 
     def _restore_original_message(self):
         """Restore the original message after temporary message expires."""
-        if self.original_message is not None:
-            self.current_message = self.original_message
-            self.scroll_position = 0
-            self.scroll_start_time = None
-            self.scroll_paused = False
-            self.content_update_needed = True
-        self.temp_message = None
-        self.temp_timer = None
+        with self._state_lock:
+            if self.original_message is not None:
+                self.current_message = self.original_message
+                self._cached_msg_width = self.scroll_font.getlength(self.current_message) if self.current_message else 0
+                self.scroll_position = 0
+                self.scroll_start_time = None
+                self.scroll_paused = False
+                self._last_rendered_scroll_pos = -1
+                self.content_update_needed = True
+            self.temp_message = None
+            self.temp_timer = None
 
     def _revert_to_default(self):
         """Revert to default mode."""
-        if self.mode_timer:
-            self.mode_timer.cancel()
-            self.mode_timer = None
+        with self._state_lock:
+            if self.mode_timer:
+                self.mode_timer.cancel()
+                self.mode_timer = None
         self.set_mode(self.MODE_DEFAULT)
 
     def _cancel_temp_message(self):
@@ -360,6 +428,73 @@ class OLEDManager:
         if self.temp_timer:
             self.temp_timer.cancel()
             self.temp_timer = None
+
+    def _start_burn_in_refresh(self):
+        """Begin the burn-in prevention refresh animation.
+        Must be called with _state_lock held.
+        """
+        self.logger.debug("Starting burn-in refresh animation")
+        self._refresh_state = "sliding_out"
+        self._refresh_frame = 0
+
+    def _animate_refresh(self):
+        """Advance the burn-in refresh animation by one frame.
+        Must be called with _state_lock held.
+
+        Uses a state machine:
+          sliding_out → blank → sliding_in → done
+        Each state runs for a fixed number of frames, producing a smooth
+        vertical slide-out, brief blank, then slide-in of refreshed content.
+        """
+        try:
+            if self._refresh_state == "sliding_out":
+                offset = self._refresh_frame + 1
+                self._draw_offset_frame(-offset)
+                self._refresh_frame += 1
+                if self._refresh_frame >= self.BURN_IN_SLIDE_FRAMES:
+                    self._refresh_state = "blank"
+                    self._refresh_frame = 0
+
+            elif self._refresh_state == "blank":
+                self._clear_display()
+                self._refresh_frame += 1
+                if self._refresh_frame >= self.BURN_IN_BLANK_FRAMES:
+                    self._refresh_state = "sliding_in"
+                    self._refresh_frame = 0
+                    # Toggle Y offset for pixel jitter between refresh cycles
+                    self._burn_in_cycle_count += 1
+                    self._status_y_offset = self._burn_in_cycle_count % 2
+
+            elif self._refresh_state == "sliding_in":
+                offset = self.BURN_IN_SLIDE_FRAMES - self._refresh_frame - 1
+                self._draw_offset_frame(offset)
+                self._refresh_frame += 1
+                if self._refresh_frame >= self.BURN_IN_SLIDE_FRAMES:
+                    self._refresh_state = None
+                    self._refresh_frame = 0
+                    self._last_burn_in_refresh = time.monotonic()
+                    self.status_update_needed = True
+                    self.content_update_needed = True
+                    self._last_rendered_scroll_pos = -1
+                    self.logger.debug("Burn-in refresh animation complete")
+
+        except Exception as e:
+            self.logger.error(f"Error during burn-in refresh animation: {e}", exc_info=True)
+            self._refresh_state = None
+            self._last_burn_in_refresh = time.monotonic()
+
+    def _draw_offset_frame(self, y_offset):
+        """Render current display content shifted vertically by y_offset pixels."""
+        try:
+            frame = Image.new("1", (self.device.width, self.device.height))
+            if self.status_layer.image and isinstance(self.status_layer.image, Image.Image):
+                frame.paste(self.status_layer.image, (0, y_offset))
+            if self.content_layer.image and isinstance(self.content_layer.image, Image.Image):
+                frame.paste(self.content_layer.image, (0, 10 + y_offset))
+            with canvas(self.device) as draw:
+                draw.bitmap((0, 0), frame, fill="white")
+        except Exception as e:
+            self.logger.error(f"Error drawing offset frame: {e}")
 
     def cleanup(self):
         """Clean up resources."""
