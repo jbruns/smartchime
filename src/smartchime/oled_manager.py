@@ -23,7 +23,7 @@ class OLEDManager:
     SCROLL_SPEED_PPS = 45
     MAX_SCROLL_MESSAGE_LENGTH = 500
     BURN_IN_REFRESH_INTERVAL = 300
-    BURN_IN_SLIDE_FRAMES = 8
+    BURN_IN_SLIDE_FRAMES = 10
     BURN_IN_BLANK_FRAMES = 4
 
     def __init__(self, spi_port=0, spi_device=0):
@@ -99,6 +99,8 @@ class OLEDManager:
         self._refresh_frame = 0
         self._burn_in_cycle_count = 0
         self._status_y_offset = 0
+        self._old_status_image = None
+        self._new_status_image = None
 
     def set_mode(self, mode, line1="", line2="", duration=None):
         """Set the display mode and content.
@@ -256,35 +258,45 @@ class OLEDManager:
         with canvas(self.device) as draw:
             draw.rectangle((0, 0, self.device.width - 1, self.device.height - 1), outline=0, fill=0)
 
+    def _render_status_content_image(self):
+        """Render status bar content (clock, divider, motion) without the horizontal separator."""
+        status_image = Image.new("1", (self.device.width, 10))
+        draw = ImageDraw.Draw(status_image)
+        y_off = self._status_y_offset
+        current_time = datetime.now().strftime("%a %m/%d %-I:%M%p")
+        icon_width = self.icon_font.getlength(self.ICON_CLOCK)
+        draw.text((0, y_off), self.ICON_CLOCK, font=self.icon_font, fill="white")
+        draw.text((icon_width + 2, y_off), current_time, font=self.status_font, fill="white")
+        sep_x = int(self.device.width * 0.75)
+        draw.line([(sep_x, y_off), (sep_x, 8 + y_off)], fill="white", width=1)
+        motion_text = self._format_motion_time()
+        motion_icon_width = self.icon_font.getlength(self.ICON_WALKING)
+        motion_text_width = self.status_font.getlength(motion_text)
+        motion_x = self.device.width - (motion_icon_width + 2 + motion_text_width)
+        draw.text((motion_x, y_off), self.ICON_WALKING, font=self.icon_font, fill="white")
+        draw.text((motion_x + motion_icon_width + 2, y_off), motion_text, font=self.status_font, fill="white")
+        return status_image
+
+    def _flush_composition(self):
+        """Validate layers and send the current composition to the device."""
+        for layer in [self.status_layer, self.content_layer]:
+            if hasattr(layer, "image") and layer.image is not None:
+                if not isinstance(layer.image, Image.Image):
+                    layer.image = Image.new("1", (self.device.width, layer.height), 0)
+            else:
+                self.logger.warning(f"Missing image in layer: {layer}")
+                layer.image = Image.new("1", (self.device.width, layer.height), 0)
+        with canvas(self.device, background=self.composition()) as draw:
+            self.composition.refresh()
+
     def _update_status_bar(self):
         """Update the status bar section."""
         try:
-            status_image = Image.new("1", (self.device.width, 10))
+            status_image = self._render_status_content_image()
             draw = ImageDraw.Draw(status_image)
-            y_off = self._status_y_offset
-            current_time = datetime.now().strftime("%a %m/%d %-I:%M%p")
-            icon_width = self.icon_font.getlength(self.ICON_CLOCK)
-            draw.text((0, y_off), self.ICON_CLOCK, font=self.icon_font, fill="white")
-            draw.text((icon_width + 2, y_off), current_time, font=self.status_font, fill="white")
-            sep_x = int(self.device.width * 0.75)
-            draw.line([(sep_x, y_off), (sep_x, 8 + y_off)], fill="white", width=1)
-            motion_text = self._format_motion_time()
-            motion_icon_width = self.icon_font.getlength(self.ICON_WALKING)
-            motion_text_width = self.status_font.getlength(motion_text)
-            motion_x = self.device.width - (motion_icon_width + 2 + motion_text_width)
-            draw.text((motion_x, y_off), self.ICON_WALKING, font=self.icon_font, fill="white")
-            draw.text((motion_x + motion_icon_width + 2, y_off), motion_text, font=self.status_font, fill="white")
             draw.line([(0, 9), (self.device.width - 1, 9)], fill="white", width=1)
             self.status_layer.image = status_image
-            for layer in [self.status_layer, self.content_layer]:
-                if hasattr(layer, "image") and layer.image is not None:
-                    if not isinstance(layer.image, Image.Image):
-                        layer.image = Image.new("1", (self.device.width, layer.height), 0)
-                else:
-                    self.logger.warning(f"Missing image in layer: {layer}")
-                    layer.image = Image.new("1", (self.device.width, layer.height), 0)
-            with canvas(self.device, background=self.composition()) as draw:
-                self.composition.refresh()
+            self._flush_composition()
             self.status_update_needed = False
         except Exception as e:
             self.logger.error(f"Error updating status bar: {e}", exc_info=True)
@@ -299,8 +311,7 @@ class OLEDManager:
             elif self.current_mode == self.MODE_DEFAULT and self.current_message:
                 self._draw_scrolling_text(draw)
             self.content_layer.image = content_image
-            with canvas(self.device, background=self.composition()) as draw:
-                self.composition.refresh()
+            self._flush_composition()
             self.content_update_needed = False
         except Exception as e:
             self.logger.error(f"Error updating content area: {e}")
@@ -434,40 +445,49 @@ class OLEDManager:
         Must be called with _state_lock held.
         """
         self.logger.debug("Starting burn-in refresh animation")
-        self._refresh_state = "sliding_out"
+        if self.status_layer.image and isinstance(self.status_layer.image, Image.Image):
+            self._old_status_image = self.status_layer.image.copy()
+        else:
+            self._old_status_image = Image.new("1", (self.device.width, 10))
+        self._new_status_image = None
+        self._refresh_state = "wiping_up"
         self._refresh_frame = 0
 
     def _animate_refresh(self):
         """Advance the burn-in refresh animation by one frame.
         Must be called with _state_lock held.
 
-        Uses a state machine:
-          sliding_out → blank → sliding_in → done
-        Each state runs for a fixed number of frames, producing a smooth
-        vertical slide-out, brief blank, then slide-in of refreshed content.
+        The horizontal separator line acts as a wiper:
+          wiping_up:  line slides from y=9 to y=0, erasing status content below it
+          blank:      brief all-black pause; toggle pixel jitter offset
+          wiping_down: line slides from y=0 to y=9, revealing new status content above it
         """
         try:
-            if self._refresh_state == "sliding_out":
-                offset = self._refresh_frame + 1
-                self._draw_offset_frame(-offset)
+            if self._refresh_state == "wiping_up":
+                separator_y = 9 - self._refresh_frame
+                self._draw_wiper_frame(self._old_status_image, separator_y)
                 self._refresh_frame += 1
                 if self._refresh_frame >= self.BURN_IN_SLIDE_FRAMES:
                     self._refresh_state = "blank"
                     self._refresh_frame = 0
 
             elif self._refresh_state == "blank":
-                self._clear_display()
+                blank = Image.new("1", (self.device.width, 10))
+                self.status_layer.image = blank
+                self._flush_composition()
                 self._refresh_frame += 1
                 if self._refresh_frame >= self.BURN_IN_BLANK_FRAMES:
-                    self._refresh_state = "sliding_in"
+                    self._refresh_state = "wiping_down"
                     self._refresh_frame = 0
                     # Toggle Y offset for pixel jitter between refresh cycles
                     self._burn_in_cycle_count += 1
                     self._status_y_offset = self._burn_in_cycle_count % 2
+                    # Pre-render new status content with updated offset
+                    self._new_status_image = self._render_status_content_image()
 
-            elif self._refresh_state == "sliding_in":
-                offset = self.BURN_IN_SLIDE_FRAMES - self._refresh_frame - 1
-                self._draw_offset_frame(offset)
+            elif self._refresh_state == "wiping_down":
+                separator_y = self._refresh_frame
+                self._draw_wiper_frame(self._new_status_image, separator_y)
                 self._refresh_frame += 1
                 if self._refresh_frame >= self.BURN_IN_SLIDE_FRAMES:
                     self._refresh_state = None
@@ -476,25 +496,27 @@ class OLEDManager:
                     self.status_update_needed = True
                     self.content_update_needed = True
                     self._last_rendered_scroll_pos = -1
+                    self._old_status_image = None
+                    self._new_status_image = None
                     self.logger.debug("Burn-in refresh animation complete")
 
         except Exception as e:
             self.logger.error(f"Error during burn-in refresh animation: {e}", exc_info=True)
             self._refresh_state = None
             self._last_burn_in_refresh = time.monotonic()
+            self._old_status_image = None
+            self._new_status_image = None
 
-    def _draw_offset_frame(self, y_offset):
-        """Render current display content shifted vertically by y_offset pixels."""
-        try:
-            frame = Image.new("1", (self.device.width, self.device.height))
-            if self.status_layer.image and isinstance(self.status_layer.image, Image.Image):
-                frame.paste(self.status_layer.image, (0, y_offset))
-            if self.content_layer.image and isinstance(self.content_layer.image, Image.Image):
-                frame.paste(self.content_layer.image, (0, 10 + y_offset))
-            with canvas(self.device) as draw:
-                draw.bitmap((0, 0), frame, fill="white")
-        except Exception as e:
-            self.logger.error(f"Error drawing offset frame: {e}")
+    def _draw_wiper_frame(self, content_image, separator_y):
+        """Draw a wiper animation frame: content visible above separator, black below."""
+        status_image = Image.new("1", (self.device.width, 10))
+        draw = ImageDraw.Draw(status_image)
+        if separator_y > 0 and content_image:
+            region = content_image.crop((0, 0, self.device.width, separator_y))
+            status_image.paste(region, (0, 0))
+        draw.line([(0, separator_y), (self.device.width - 1, separator_y)], fill="white", width=1)
+        self.status_layer.image = status_image
+        self._flush_composition()
 
     def cleanup(self):
         """Clean up resources."""
