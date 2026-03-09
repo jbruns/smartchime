@@ -77,7 +77,7 @@ class SmartchimeSystem:
             )
             self.control_locks = {"volume": 0, "sound_select": 0, "toggle": 0}
 
-            self.mqtt_client = mqtt.Client()
+            self.mqtt_client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2)
             self.mqtt_client.on_connect = self.on_connect
             self.mqtt_client.on_message = self.on_message
             self.mqtt_client.on_disconnect = self.on_disconnect
@@ -195,16 +195,17 @@ class SmartchimeSystem:
 
         self.oled.set_mode("centered_2line", "Select sound:", filename, duration=5)
 
-    def on_connect(self, client, userdata, flags, rc):
+    def on_connect(self, client, userdata, flags, reason_code, properties):
         """Handle the MQTT connection event.
 
         Args:
             client: The MQTT client instance.
             userdata: User data of the client.
             flags: Response flags from the broker.
-            rc: Connection result code.
+            reason_code: Connection result reason code.
+            properties: MQTT v5.0 properties.
         """
-        if rc == 0:
+        if reason_code == 0:
             self.logger.info("Connected to MQTT broker")
             topics = [
                 (self.config["mqtt"]["topics"]["doorbell"], 0),
@@ -214,18 +215,20 @@ class SmartchimeSystem:
             client.subscribe(topics)
             self.logger.info(f"Subscribed to topics: {[t[0] for t in topics]}")
         else:
-            self.logger.error(f"Failed to connect to MQTT broker: {rc}")
+            self.logger.error(f"Failed to connect to MQTT broker: {reason_code}")
 
-    def on_disconnect(self, client, userdata, rc):
+    def on_disconnect(self, client, userdata, flags, reason_code, properties):
         """Handle the MQTT disconnection event.
 
         Args:
             client: The MQTT client instance.
             userdata: User data of the client.
-            rc: Disconnection result code.
+            flags: Response flags from the broker.
+            reason_code: Disconnection result reason code.
+            properties: MQTT v5.0 properties.
         """
-        if rc != 0:
-            self.logger.error(f"Unexpected MQTT disconnection: {rc}")
+        if reason_code != 0:
+            self.logger.error(f"Unexpected MQTT disconnection: {reason_code}")
         else:
             self.logger.info("Disconnected from MQTT broker")
 

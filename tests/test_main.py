@@ -149,7 +149,7 @@ class TestSoundSelection:
 class TestOnConnect:
     def test_subscribes_to_topics(self, system):
         client = MagicMock()
-        system.on_connect(client, None, {}, 0)
+        system.on_connect(client, None, MagicMock(), 0, None)
         client.subscribe.assert_called_once()
         subscribed = client.subscribe.call_args[0][0]
         topics = {t[0] for t in subscribed}
@@ -157,7 +157,7 @@ class TestOnConnect:
 
     def test_failed_connection(self, system):
         client = MagicMock()
-        system.on_connect(client, None, {}, 1)
+        system.on_connect(client, None, MagicMock(), 1, None)
         client.subscribe.assert_not_called()
 
 
