@@ -28,6 +28,7 @@ dev = [
     "ruff>=0.9",
     "pytest>=8",
     "pytest-mock>=3",
+    "pytest-cov>=6",
     "pre-commit>=4",
 ]
 
@@ -64,4 +65,17 @@ quote-style = "double"
 testpaths = ["tests"]
 markers = [
     "hardware: tests requiring Raspberry Pi hardware (deselect with '-m \"not hardware\"')",
+]
+
+[tool.coverage.run]
+source = ["smartchime"]
+branch = true
+
+[tool.coverage.report]
+show_missing = true
+skip_empty = true
+exclude_lines = [
+    "pragma: no cover",
+    "if __name__ == .__main__.",
+    "if TYPE_CHECKING:",
 ]

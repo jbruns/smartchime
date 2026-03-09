@@ -1,5 +1,7 @@
 """Tests for shairport_metadata module."""
 
+from unittest.mock import MagicMock
+
 from smartchime.shairport_metadata import ShairportMetadata
 
 
@@ -88,3 +90,76 @@ class TestShairportMetadata:
         # Should not raise — logs error and returns
         reader.start()
         assert reader._reader_thread is None or not reader._reader_thread.is_alive()
+
+    def test_parse_playback_progress_stops(self):
+        reader = ShairportMetadata(pipe_path="/nonexistent")
+        reader.is_playing = True
+
+        xml = '<item type="ssnc"><code>prgr</code></item>'
+        reader._parse_metadata(xml)
+
+        assert reader.is_playing is False
+
+    def test_parse_core_metadata_without_data(self):
+        reader = ShairportMetadata(pipe_path="/nonexistent")
+        reader.current_artist = "Original Artist"
+
+        xml = '<item type="core"><code>asar</code></item>'
+        reader._parse_metadata(xml)
+
+        assert reader.current_artist == "Original Artist"
+
+    def test_notify_callbacks_swallows_exception(self):
+        reader = ShairportMetadata(pipe_path="/nonexistent")
+        received = []
+
+        def bad_callback(artist, title, is_playing):
+            raise RuntimeError("boom")
+
+        def good_callback(artist, title, is_playing):
+            received.append((artist, title, is_playing))
+
+        reader.add_callback(bad_callback)
+        reader.add_callback(good_callback)
+
+        xml = '<item type="ssnc"><code>pbeg</code></item>'
+        reader._parse_metadata(xml)
+
+        assert len(received) == 1
+        assert received[0][2] is True
+
+    def test_stop_sets_event_and_joins(self):
+        reader = ShairportMetadata(pipe_path="/nonexistent")
+        mock_thread = MagicMock()
+        mock_thread.is_alive.return_value = True
+        reader._reader_thread = mock_thread
+
+        reader.stop()
+
+        assert reader._stop_event.is_set()
+        mock_thread.join.assert_called_once_with(timeout=1.0)
+
+    def test_stop_noop_when_no_thread(self):
+        reader = ShairportMetadata(pipe_path="/nonexistent")
+        assert reader._reader_thread is None
+        reader.stop()
+        assert not reader._stop_event.is_set()
+
+    def test_remove_nonexistent_callback(self):
+        reader = ShairportMetadata(pipe_path="/nonexistent")
+
+        def unknown_callback(artist, title, is_playing):
+            pass
+
+        reader.remove_callback(unknown_callback)
+        assert len(reader._callbacks) == 0
+
+    def test_start_already_running(self):
+        reader = ShairportMetadata(pipe_path="/nonexistent")
+        mock_thread = MagicMock()
+        mock_thread.is_alive.return_value = True
+        reader._reader_thread = mock_thread
+
+        reader.start()
+
+        assert reader._reader_thread is mock_thread
