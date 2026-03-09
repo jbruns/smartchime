@@ -1,5 +1,5 @@
 import logging
-from threading import Event, Lock
+from threading import Event, Lock, Thread
 
 import vlc
 from vcgencmd import Vcgencmd
@@ -15,6 +15,7 @@ class HDMIManager:
         self._vlc_instance = None
         self._playback_event = Event()
         self._player_lock = Lock()
+        self._stop_requested = False
         self.vcgencmd = Vcgencmd()
         self.logger.info("Initialized HDMI manager")
 
@@ -57,9 +58,14 @@ class HDMIManager:
         self._playback_event.set()
 
     def _on_vlc_end_reached(self, event):
-        """VLC callback: stream ended. Auto-cleanup."""
-        self.logger.info("VLC event: MediaPlayerEndReached — stopping video")
-        self.stop_video()
+        """VLC callback: stream ended.
+
+        Cannot call stop_video() directly from VLC's event thread (deadlock risk
+        with _player_lock). Instead, defer cleanup to a short-lived thread.
+        """
+        self.logger.info("VLC event: MediaPlayerEndReached — scheduling stop")
+        self._stop_requested = True
+        Thread(target=self.stop_video, daemon=True).start()
 
     def play_video(self, url):
         """Play a video stream on the HDMI display."""
@@ -69,6 +75,7 @@ class HDMIManager:
 
         with self._player_lock:
             try:
+                self._stop_requested = False
                 instance = self._get_vlc_instance()
                 self.player = instance.media_player_new()
 
@@ -83,35 +90,47 @@ class HDMIManager:
 
                 self._set_display_power("on")
 
-                started = self._playback_event.wait(timeout=self.VLC_STARTUP_TIMEOUT)
-
-                if not started:
-                    self.logger.warning(f"VLC startup timed out after {self.VLC_STARTUP_TIMEOUT}s for: {url}")
-                elif self.player and self.player.get_state() == vlc.State.Error:
-                    self.logger.warning(f"Failed to play video stream: {url}")
-                else:
-                    self.logger.info("Video playback started successfully")
-                    return
-
             except Exception as e:
                 self.logger.warning(f"Error setting up video playback: {e}")
+                self._release_player_locked()
+                self._set_display_power("off")
+                return
 
-        # If we fell through (timeout, error, exception), clean up
+        # Wait for VLC startup OUTSIDE the lock so callbacks can acquire it
+        started = self._playback_event.wait(timeout=self.VLC_STARTUP_TIMEOUT)
+
+        with self._player_lock:
+            if self._stop_requested:
+                return
+            if not started:
+                self.logger.warning(f"VLC startup timed out after {self.VLC_STARTUP_TIMEOUT}s for: {url}")
+            elif self.player and self.player.get_state() == vlc.State.Error:
+                self.logger.warning(f"Failed to play video stream: {url}")
+            else:
+                self.logger.info("Video playback started successfully")
+                return
+
+        # If we fell through (timeout, error), clean up
         self.stop_video()
+
+    def _release_player_locked(self):
+        """Release the VLC player. Must be called with _player_lock held."""
+        if self.player:
+            try:
+                self.player.stop()
+            except Exception as e:
+                self.logger.warning(f"Error stopping VLC player: {e}")
+            try:
+                self.player.release()
+            except Exception as e:
+                self.logger.warning(f"Error releasing VLC player: {e}")
+            self.player = None
 
     def stop_video(self):
         """Stop the currently playing video and release resources."""
         with self._player_lock:
             if self.player:
-                try:
-                    self.player.stop()
-                except Exception as e:
-                    self.logger.warning(f"Error stopping VLC player: {e}")
-                try:
-                    self.player.release()
-                except Exception as e:
-                    self.logger.warning(f"Error releasing VLC player: {e}")
-                self.player = None
+                self._release_player_locked()
                 self.logger.info("Video playback stopped")
 
         self._set_display_power("off")

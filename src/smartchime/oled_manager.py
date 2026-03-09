@@ -246,30 +246,54 @@ class OLEDManager:
             mode = self.current_mode
             has_message = bool(self.current_message)
 
+            # Snapshot state for rendering outside the lock
+            snap = self._snapshot_render_state() if (should_update_status or should_update_content) else None
+
         if should_update_status:
-            self._update_status_bar()
+            self._update_status_bar(snap)
         if should_update_content:
-            self._update_content_area()
+            self._update_content_area(snap)
         if mode == self.MODE_DEFAULT and has_message:
             self._update_scroll_state()
+
+    def _snapshot_render_state(self):
+        """Capture a snapshot of all state needed for rendering.
+        Must be called with _state_lock held.
+        """
+        return {
+            "mode": self.current_mode,
+            "message": self.current_message,
+            "msg_width": self._cached_msg_width,
+            "scroll_position": self.scroll_position,
+            "scroll_paused": self.scroll_paused,
+            "line1": self.line1,
+            "line2": self.line2,
+            "motion_active": self.motion_active,
+            "last_motion_time": self.last_motion_time,
+            "status_y_offset": self._status_y_offset,
+        }
 
     def _clear_display(self):
         """Clear the OLED display."""
         with canvas(self.device) as draw:
             draw.rectangle((0, 0, self.device.width - 1, self.device.height - 1), outline=0, fill=0)
 
-    def _render_status_content_image(self):
-        """Render status bar content (clock, divider, motion) without the horizontal separator."""
+    def _render_status_content_image(self, snap=None):
+        """Render status bar content (clock, divider, motion) without the horizontal separator.
+
+        Args:
+            snap (dict): Optional state snapshot. If None, reads live state (must hold lock).
+        """
         status_image = Image.new("1", (self.device.width, 10))
         draw = ImageDraw.Draw(status_image)
-        y_off = self._status_y_offset
+        y_off = snap["status_y_offset"] if snap else self._status_y_offset
         current_time = datetime.now().strftime("%a %m/%d %-I:%M%p")
         icon_width = self.icon_font.getlength(self.ICON_CLOCK)
         draw.text((0, y_off), self.ICON_CLOCK, font=self.icon_font, fill="white")
         draw.text((icon_width + 2, y_off), current_time, font=self.status_font, fill="white")
         sep_x = int(self.device.width * 0.75)
         draw.line([(sep_x, y_off), (sep_x, 8 + y_off)], fill="white", width=1)
-        motion_text = self._format_motion_time()
+        motion_text = self._format_motion_time(snap)
         motion_icon_width = self.icon_font.getlength(self.ICON_WALKING)
         motion_text_width = self.status_font.getlength(motion_text)
         motion_x = self.device.width - (motion_icon_width + 2 + motion_text_width)
@@ -289,10 +313,10 @@ class OLEDManager:
         with canvas(self.device, background=self.composition()) as draw:
             self.composition.refresh()
 
-    def _update_status_bar(self):
+    def _update_status_bar(self, snap=None):
         """Update the status bar section."""
         try:
-            status_image = self._render_status_content_image()
+            status_image = self._render_status_content_image(snap)
             draw = ImageDraw.Draw(status_image)
             draw.line([(0, 9), (self.device.width - 1, 9)], fill="white", width=1)
             self.status_layer.image = status_image
@@ -301,44 +325,63 @@ class OLEDManager:
         except Exception as e:
             self.logger.error(f"Error updating status bar: {e}", exc_info=True)
 
-    def _update_content_area(self):
+    def _update_content_area(self, snap=None):
         """Update the main content area."""
         try:
             content_image = Image.new("1", (self.device.width, 22))
             draw = ImageDraw.Draw(content_image)
-            if self.current_mode == self.MODE_CENTERED:
-                self._draw_centered_text(draw)
-            elif self.current_mode == self.MODE_DEFAULT and self.current_message:
-                self._draw_scrolling_text(draw)
+            mode = snap["mode"] if snap else self.current_mode
+            message = snap["message"] if snap else self.current_message
+            if mode == self.MODE_CENTERED:
+                line1 = snap["line1"] if snap else self.line1
+                line2 = snap["line2"] if snap else self.line2
+                self._draw_centered_text(draw, line1, line2)
+            elif mode == self.MODE_DEFAULT and message:
+                msg_width = snap["msg_width"] if snap else self._cached_msg_width
+                scroll_pos = snap["scroll_position"] if snap else self.scroll_position
+                scroll_paused = snap["scroll_paused"] if snap else self.scroll_paused
+                self._draw_scrolling_text(draw, message, msg_width, scroll_pos, scroll_paused)
             self.content_layer.image = content_image
             self._flush_composition()
             self.content_update_needed = False
         except Exception as e:
             self.logger.error(f"Error updating content area: {e}")
 
-    def _draw_centered_text(self, draw):
+    def _draw_centered_text(self, draw, line1=None, line2=None):
         """Draw centered text lines."""
-        if self.line1:
-            line1 = self._truncate_text(self.line1, self.device.width, draw)
+        if line1 is None:
+            line1 = self.line1
+        if line2 is None:
+            line2 = self.line2
+        if line1:
+            line1 = self._truncate_text(line1, self.device.width, draw)
             x1, y1 = self._center_text(line1, draw, 12, 0)
             draw.text((x1, y1), line1, font=self.text_font, fill="white")
-        if self.line2:
-            line2 = self._truncate_text(self.line2, self.device.width, draw)
+        if line2:
+            line2 = self._truncate_text(line2, self.device.width, draw)
             x2, y2 = self._center_text(line2, draw, 12, 12)
             draw.text((x2, y2), line2, font=self.text_font, fill="white")
 
-    def _draw_scrolling_text(self, draw):
-        """Draw scrolling text."""
-        if self.current_mode == self.MODE_CENTERED or not self.current_message:
+    def _draw_scrolling_text(self, draw, message=None, msg_width=None, scroll_pos=None, paused=None):
+        """Draw scrolling text using snapshot values."""
+        if message is None:
+            message = self.current_message
+        if not message:
             return
-        msg_width = self._cached_msg_width
+        if msg_width is None:
+            msg_width = self._cached_msg_width
+        if scroll_pos is None:
+            scroll_pos = self.scroll_position
+        if paused is None:
+            paused = self.scroll_paused
         if msg_width <= self.device.width:
             x_pos = (self.device.width - msg_width) // 2
-        elif self.scroll_paused:
-            x_pos = self.device.width - self.scroll_position
+        elif paused:
+            # Show text at starting position during pause
+            x_pos = self.device.width
         else:
-            x_pos = self.device.width - self.scroll_position
-        draw.text((x_pos, 0), self.current_message, font=self.scroll_font, fill="white")
+            x_pos = self.device.width - scroll_pos
+        draw.text((x_pos, 0), message, font=self.scroll_font, fill="white")
 
     def _update_scroll_state(self):
         """Update scrolling text state using time-based positioning."""
@@ -400,13 +443,15 @@ class OLEDManager:
         y = y_offset + (height - text_height) // 2
         return x, y
 
-    def _format_motion_time(self):
+    def _format_motion_time(self, snap=None):
         """Format time since last motion."""
-        if self.motion_active:
+        motion_active = snap["motion_active"] if snap else self.motion_active
+        last_motion_time = snap["last_motion_time"] if snap else self.last_motion_time
+        if motion_active:
             return "now"
-        if self.last_motion_time is None:
+        if last_motion_time is None:
             return "--"
-        delta = datetime.now(UTC) - self.last_motion_time
+        delta = datetime.now(UTC) - last_motion_time
         minutes = int(delta.total_seconds() / 60)
         if minutes < 60:
             return f"{minutes}m"

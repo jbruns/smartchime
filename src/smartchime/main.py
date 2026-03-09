@@ -41,6 +41,8 @@ class SmartchimeSystem:
             self.logger.error(f"Failed to load configuration: {e}")
             raise
 
+        self._migrate_throttle_config()
+
         try:
             self.logger.info("Initializing system components")
 
@@ -101,6 +103,26 @@ class SmartchimeSystem:
             self.logger.error(f"System initialization failed: {e}")
             self.cleanup()
             raise
+
+    def _migrate_throttle_config(self):
+        """Detect and convert legacy cycle-count throttle values to seconds.
+
+        Old config used cycle counts (e.g., 10, 20, 40) where each cycle ≈ 12.5ms.
+        New config uses seconds (e.g., 0.15, 0.4, 1.0). Any value > 5 is clearly
+        a legacy cycle count and is converted automatically.
+        """
+        throttle = self.config.get("controls", {}).get("throttle", {})
+        migrated = False
+        for key, value in throttle.items():
+            if isinstance(value, (int, float)) and value > 5:
+                new_value = round(value * 0.0125, 3)
+                throttle[key] = new_value
+                self.logger.warning(
+                    f"Migrated legacy throttle '{key}': {value} cycles → {new_value}s"
+                )
+                migrated = True
+        if migrated:
+            self.logger.info("Legacy throttle config detected and auto-converted to seconds")
 
     def toggle_display(self):
         """Toggle the display power state between on and off."""
