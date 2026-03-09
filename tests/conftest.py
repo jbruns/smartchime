@@ -26,7 +26,6 @@ _HARDWARE_MODULES = [
     "luma.oled.device",
     "vcgencmd",
     "vlc",
-    "rpi_lgpio",
     "lgpio",
 ]
 
