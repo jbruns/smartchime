@@ -23,6 +23,8 @@ hw = [
     "gpiozero~=2.0.1",
     "vcgencmd~=0.1.1",
     "pyalsaaudio~=0.11.0",
+    "spidev~=3.8",
+    "lgpio~=0.2.2.0"
 ]
 dev = [
     "ruff~=0.15",

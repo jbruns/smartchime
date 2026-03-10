@@ -8,7 +8,7 @@ dietpi-config:
   - Advanced options: enable SPI
   
 
-sudo apt install python3-pip python3-dev vlc git python3.11-venv python3-lgpio build-essential gcc libasound2-dev
+sudo apt install python3-pip python3-dev vlc git python3.13-venv build-essential gcc libasound2-dev liblgpio-dev
 sudo dietpi-software install 37 (shairport-sync)
 sudo systemctl unmask systemd-logind
 sudo usermod -aG video,render,audio,gpio,spi dietpi
