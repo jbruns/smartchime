@@ -84,6 +84,12 @@ gpio:
     clk: 27  # Clock signal pin
     dt: 22   # Data signal pin
     sw: 17   # Switch/button pin
+
+  # Rotary encoder tuning
+  # max_steps limits gpiozero's internal step counter range.
+  # 0 = unbounded (default). A small value like 2 can reduce
+  # "ghost" inputs from contact bounce after the user stops turning.
+  max_steps: 0
     
 # Control Input Throttling Configuration
 controls:

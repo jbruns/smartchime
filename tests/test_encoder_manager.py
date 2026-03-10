@@ -37,8 +37,11 @@ class TestRotaryEncoder:
         encoder.set_callbacks(cw, ccw, btn)
 
         assert encoder._callback_button is btn
-        assert encoder.encoder.when_rotated_clockwise is cw
-        assert encoder.encoder.when_rotated_counter_clockwise is ccw
+        assert encoder._callback_cw is cw
+        assert encoder._callback_ccw is ccw
+        # Verify gpiozero callbacks are wired (they wrap our callbacks)
+        assert encoder.encoder.when_rotated_clockwise is not None
+        assert encoder.encoder.when_rotated_counter_clockwise is not None
 
     def test_button_callback(self, encoder):
         btn = MagicMock()
@@ -66,6 +69,30 @@ class TestRotaryEncoder:
         gpio_mock.Button.assert_called_once_with(12, bounce_time=0.05)
         assert enc.encoder is gpio_mock.RotaryEncoder.return_value
 
+    def test_encoder_max_steps_forwarded(self, _mock_hardware_modules):
+        """Verifies that max_steps is forwarded to gpiozero.RotaryEncoder."""
+        gpio_mock = _mock_hardware_modules["gpiozero"]
+        gpio_mock.Button.side_effect = [MagicMock()]
+        gpio_mock.RotaryEncoder.return_value = MagicMock()
+
+        from smartchime.encoder_manager import RotaryEncoder
+
+        RotaryEncoder(10, 11, 12, max_steps=2)
+        gpio_mock.RotaryEncoder.assert_called_once_with(10, 11, max_steps=2)
+
+    def test_rotation_callback_logs_and_fires(self, encoder):
+        """Rotation callback wrapper fires the user callback and logs timing."""
+        cw = MagicMock()
+        ccw = MagicMock()
+        encoder.encoder.steps = 1
+        encoder.set_callbacks(cw, ccw, MagicMock())
+
+        encoder._rotation_callback("CW")
+        cw.assert_called_once()
+
+        encoder._rotation_callback("CCW")
+        ccw.assert_called_once()
+
 
 class TestEncoderManager:
     def test_init_creates_two_encoders(self, manager):
@@ -80,8 +107,8 @@ class TestEncoderManager:
         manager.setup_volume_callbacks(up, down, mute)
 
         assert manager.volume_encoder._callback_button is mute
-        assert manager.volume_encoder.encoder.when_rotated_clockwise is up
-        assert manager.volume_encoder.encoder.when_rotated_counter_clockwise is down
+        assert manager.volume_encoder._callback_cw is up
+        assert manager.volume_encoder._callback_ccw is down
 
     def test_setup_sound_select_callbacks(self, manager):
         nxt = MagicMock()
@@ -91,5 +118,5 @@ class TestEncoderManager:
         manager.setup_sound_select_callbacks(nxt, prev, play)
 
         assert manager.sound_select_encoder._callback_button is play
-        assert manager.sound_select_encoder.encoder.when_rotated_clockwise is nxt
-        assert manager.sound_select_encoder.encoder.when_rotated_counter_clockwise is prev
+        assert manager.sound_select_encoder._callback_cw is nxt
+        assert manager.sound_select_encoder._callback_ccw is prev

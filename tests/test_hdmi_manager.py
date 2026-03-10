@@ -1,6 +1,6 @@
 """Tests for HDMIManager."""
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 

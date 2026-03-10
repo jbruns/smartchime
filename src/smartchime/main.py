@@ -77,6 +77,7 @@ class SmartchimeSystem:
                     self.config["gpio"]["sound_select_encoder"]["dt"],
                     self.config["gpio"]["sound_select_encoder"]["sw"],
                 ),
+                max_steps=self.config["gpio"].get("max_steps", 0),
             )
             self.control_locks = {"volume": 0.0, "sound_select": 0.0, "toggle": 0.0}
             self._throttle_lock = Lock()
