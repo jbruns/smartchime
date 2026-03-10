@@ -10,8 +10,7 @@ def hdmi_manager(_mock_hardware_modules):
     """Create an HDMIManager instance with all hardware mocked."""
     from smartchime.hdmi_manager import HDMIManager
 
-    with patch("smartchime.hdmi_manager.time.sleep"):
-        manager = HDMIManager()
+    manager = HDMIManager()
     # Reset mock call history from __init__
     manager.vcgencmd.reset_mock()
     return manager
@@ -48,11 +47,15 @@ class TestHDMIManager:
         mock_instance = MagicMock()
         mock_player = MagicMock()
         mock_player.get_state.return_value = MagicMock()
+        mock_player.event_manager.return_value = MagicMock()
         mock_instance.media_player_new.return_value = mock_player
         vlc_mock.Instance.return_value = mock_instance
 
-        with patch("smartchime.hdmi_manager.time.sleep"):
-            hdmi_manager.play_video("rtsp://example.com/stream")
+        # Make the playback event fire immediately
+        hdmi_manager._playback_event = MagicMock()
+        hdmi_manager._playback_event.wait.return_value = True
+
+        hdmi_manager.play_video("rtsp://example.com/stream")
 
         vlc_mock.Instance.assert_called_once()
         mock_instance.media_player_new.assert_called_once()
@@ -68,11 +71,14 @@ class TestHDMIManager:
         mock_instance = MagicMock()
         mock_player = MagicMock()
         mock_player.get_state.return_value = MagicMock()
+        mock_player.event_manager.return_value = MagicMock()
         mock_instance.media_player_new.return_value = mock_player
         vlc_mock.Instance.return_value = mock_instance
 
-        with patch("smartchime.hdmi_manager.time.sleep"):
-            hdmi_manager.play_video("rtsp://example.com/stream")
+        hdmi_manager._playback_event = MagicMock()
+        hdmi_manager._playback_event.wait.return_value = True
+
+        hdmi_manager.play_video("rtsp://example.com/stream")
 
         old_player.stop.assert_called_once()
 
@@ -84,27 +90,43 @@ class TestHDMIManager:
         mock_instance = MagicMock()
         mock_player = MagicMock()
         mock_player.get_state.return_value = error_state
+        mock_player.event_manager.return_value = MagicMock()
         mock_instance.media_player_new.return_value = mock_player
         vlc_mock.Instance.return_value = mock_instance
 
-        with patch("smartchime.hdmi_manager.time.sleep"):
-            hdmi_manager.play_video("rtsp://example.com/bad")
+        hdmi_manager._playback_event = MagicMock()
+        hdmi_manager._playback_event.wait.return_value = True
 
-        hdmi_manager.vcgencmd.display_power_off.assert_called_once_with(2)
+        hdmi_manager.play_video("rtsp://example.com/bad")
+
+        hdmi_manager.vcgencmd.display_power_off.assert_called_with(2)
 
     def test_stop_video_stops_player(self, hdmi_manager):
-        """Stops player, sets to None, and powers off display."""
+        """Stops player, releases it, sets to None, and powers off display."""
         mock_player = MagicMock()
         hdmi_manager.player = mock_player
 
         hdmi_manager.stop_video()
 
         mock_player.stop.assert_called_once()
+        mock_player.release.assert_called_once()
         assert hdmi_manager.player is None
         hdmi_manager.vcgencmd.display_power_off.assert_called_once_with(2)
 
     def test_stop_video_noop_without_player(self, hdmi_manager):
-        """Does nothing when self.player is None."""
+        """Powers off display even when self.player is None."""
         hdmi_manager.player = None
         hdmi_manager.stop_video()
-        hdmi_manager.vcgencmd.display_power_off.assert_not_called()
+        hdmi_manager.vcgencmd.display_power_off.assert_called_once_with(2)
+
+    def test_cleanup_releases_vlc_instance(self, hdmi_manager, _mock_hardware_modules):
+        """cleanup() releases the VLC instance."""
+        vlc_mock = _mock_hardware_modules["vlc"]
+        mock_instance = MagicMock()
+        vlc_mock.Instance.return_value = mock_instance
+        hdmi_manager._vlc_instance = mock_instance
+
+        hdmi_manager.cleanup()
+
+        mock_instance.release.assert_called_once()
+        assert hdmi_manager._vlc_instance is None

@@ -117,9 +117,7 @@ class SmartchimeSystem:
             if isinstance(value, (int, float)) and value > 5:
                 new_value = round(value * 0.0125, 3)
                 throttle[key] = new_value
-                self.logger.warning(
-                    f"Migrated legacy throttle '{key}': {value} cycles → {new_value}s"
-                )
+                self.logger.warning(f"Migrated legacy throttle '{key}': {value} cycles → {new_value}s")
                 migrated = True
         if migrated:
             self.logger.info("Legacy throttle config detected and auto-converted to seconds")
@@ -400,12 +398,14 @@ class SmartchimeSystem:
     def cleanup(self):
         """Clean up resources before shutting down."""
         self.logger.info("Cleaning up system resources")
-        if self.mqtt_client:
+        if getattr(self, "mqtt_client", None):
             self.mqtt_client.loop_stop()
             self.mqtt_client.disconnect()
-        self.hdmi.cleanup()
-        self.oled.cleanup()
-        if hasattr(self, "shairport"):
+        if getattr(self, "hdmi", None):
+            self.hdmi.cleanup()
+        if getattr(self, "oled", None):
+            self.oled.cleanup()
+        if getattr(self, "shairport", None):
             self.shairport.stop()
             self.logger.info("Stopped Shairport metadata reader")
         self.logger.info("Cleanup complete")

@@ -164,6 +164,7 @@ class TestOLEDManager:
     def test_update_scroll_state_initializes_start_time(self, mgr):
         mgr.current_mode = mgr.MODE_DEFAULT
         mgr.current_message = "A" * 50  # 50*10=500 > 128
+        mgr._cached_msg_width = 500
         mgr.scroll_start_time = None
         mgr._update_scroll_state()
         assert mgr.scroll_start_time is not None
@@ -171,28 +172,34 @@ class TestOLEDManager:
     def test_update_scroll_state_increments_position(self, mgr):
         mgr.current_mode = mgr.MODE_DEFAULT
         mgr.current_message = "A" * 50  # 500px > 128
-        mgr.scroll_start_time = time.time() - 1.0
-        mgr.scroll_position = 5
+        mgr._cached_msg_width = 500
+        # Set start_time 1 second ago → position = int(1.0 * 45) = 45
+        mgr.scroll_start_time = time.monotonic() - 1.0
+        mgr.scroll_position = 0
+        mgr._last_rendered_scroll_pos = -1
         mgr.scroll_paused = False
         mgr._update_scroll_state()
-        assert mgr.scroll_position == 6
+        assert mgr.scroll_position == 45
         assert mgr.content_update_needed is True
 
     def test_update_scroll_state_pauses_at_end(self, mgr):
         mgr.current_mode = mgr.MODE_DEFAULT
         mgr.current_message = "A" * 50  # msg_width=500
-        mgr.scroll_start_time = time.time() - 1.0
+        mgr._cached_msg_width = 500
         mgr.scroll_paused = False
-        # position must exceed msg_width + device.width = 500 + 128 = 628
-        mgr.scroll_position = 629
+        # Need elapsed time such that int(elapsed * 45) >= 500 + 128 = 628
+        # elapsed = 628 / 45 = ~13.96s
+        mgr.scroll_start_time = time.monotonic() - 14.0
+        mgr._last_rendered_scroll_pos = -1
         mgr._update_scroll_state()
         assert mgr.scroll_paused is True
 
     def test_update_scroll_state_resumes_after_pause(self, mgr):
         mgr.current_mode = mgr.MODE_DEFAULT
         mgr.current_message = "A" * 50
+        mgr._cached_msg_width = 500
         mgr.scroll_paused = True
-        mgr.scroll_start_time = time.time() - 2.5  # > 2.0s pause
+        mgr.scroll_start_time = time.monotonic() - 2.5  # > 2.0s pause
         mgr._update_scroll_state()
         assert mgr.scroll_paused is False
         assert mgr.scroll_position == 0

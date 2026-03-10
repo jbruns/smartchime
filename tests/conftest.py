@@ -91,10 +91,10 @@ def sample_config(tmp_path):
         },
         "controls": {
             "throttle": {
-                "volume": 10,
-                "sound_select": 20,
-                "toggle": 40,
-                "default": 20,
+                "volume": 0.15,
+                "sound_select": 0.25,
+                "toggle": 0.5,
+                "default": 0.25,
             },
         },
         "shairport": {

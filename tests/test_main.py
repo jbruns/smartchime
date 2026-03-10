@@ -2,6 +2,8 @@
 
 import json
 import logging
+import time
+from threading import Lock
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -21,7 +23,8 @@ def system(sample_config):
     sys_obj.encoders = MagicMock()
     sys_obj.shairport = MagicMock()
     sys_obj.mqtt_client = MagicMock()
-    sys_obj.control_locks = {"volume": 0, "sound_select": 0, "toggle": 0}
+    sys_obj.control_locks = {"volume": 0.0, "sound_select": 0.0, "toggle": 0.0}
+    sys_obj._throttle_lock = Lock()
     sys_obj.available_sounds = ["doorbell.wav", "chime.wav"]
     sys_obj.current_sound_index = 0
     return sys_obj
@@ -41,12 +44,16 @@ class TestCheckControlThrottle:
         assert system._check_control_throttle("volume") is True
 
     def test_uses_config_throttle_period(self, system):
+        before = time.monotonic()
         system._check_control_throttle("volume")
-        assert system.control_locks["volume"] == system.config["controls"]["throttle"]["volume"]
+        after = time.monotonic()
+        assert before <= system.control_locks["volume"] <= after
 
     def test_unknown_control_type_uses_default(self, system):
-        system._check_control_throttle("nonexistent")
-        assert system.control_locks["default"] == system.config["controls"]["throttle"]["default"]
+        before = time.monotonic()
+        assert system._check_control_throttle("nonexistent") is False
+        after = time.monotonic()
+        assert before <= system.control_locks["default"] <= after
 
     def test_lock_decremented_to_zero_allows_again(self, system):
         system._check_control_throttle("volume")
