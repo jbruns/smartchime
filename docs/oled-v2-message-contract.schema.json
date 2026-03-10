@@ -1,0 +1,132 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://github.com/jbruns/smartchime/docs/oled-v2-message-contract.schema.json",
+  "title": "Smartchime OLED v2 Message Contract",
+  "description": "Full display state snapshot sent from Home Assistant to the Smartchime OLED manager via MQTT (topic: smartchime/display/oled).",
+  "type": "object",
+  "required": ["version", "active", "contrast", "line1", "line2", "override"],
+  "additionalProperties": false,
+  "properties": {
+    "version": {
+      "const": 2,
+      "description": "Contract version. Must be 2."
+    },
+    "active": {
+      "type": "boolean",
+      "description": "Whether the OLED display is on (show) or off (hide)."
+    },
+    "contrast": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1,
+      "description": "Display contrast level. Converted to 0–255 internally."
+    },
+    "line1": {
+      "type": "object",
+      "description": "Status bar configuration (top 10px of the 128x32 OLED).",
+      "required": ["mode"],
+      "additionalProperties": false,
+      "properties": {
+        "mode": {
+          "type": "string",
+          "pattern": "^(clock|motion)(,\\s*(clock|motion))*$",
+          "description": "Comma-separated list of status bar elements to display. At least one required. Valid values: 'clock', 'motion'.",
+          "examples": ["clock, motion", "clock", "motion"]
+        },
+        "motion": {
+          "type": "object",
+          "description": "Motion detection state. Required when mode includes 'motion'.",
+          "required": ["active"],
+          "additionalProperties": false,
+          "properties": {
+            "active": {
+              "type": "boolean",
+              "description": "Whether motion is currently detected. Displays 'now' when true."
+            },
+            "timestamp": {
+              "type": "string",
+              "format": "date-time",
+              "description": "ISO 8601 timestamp of the last motion event. Used to display elapsed time (e.g., '5m', '2h'). Naive timestamps are assumed UTC."
+            }
+          }
+        }
+      },
+      "if": {
+        "properties": {
+          "mode": { "pattern": "motion" }
+        }
+      },
+      "then": {
+        "required": ["mode", "motion"]
+      }
+    },
+    "line2": {
+      "type": "object",
+      "description": "Content area configuration (bottom 22px of the 128x32 OLED).",
+      "required": ["mode"],
+      "additionalProperties": false,
+      "properties": {
+        "mode": {
+          "type": "string",
+          "enum": ["rotate"],
+          "description": "Content display mode. Currently only 'rotate' is supported."
+        },
+        "rotate_seconds": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "default": 10,
+          "description": "Seconds between rotating to the next item."
+        },
+        "items": {
+          "type": "array",
+          "default": [],
+          "description": "Items to rotate through, displayed in descending priority order. Each item scrolls horizontally if wider than the display.",
+          "items": {
+            "type": "object",
+            "required": ["key", "text", "priority"],
+            "additionalProperties": false,
+            "properties": {
+              "key": {
+                "type": "string",
+                "minLength": 1,
+                "description": "Unique identifier for the item. Used for logging, internal reference, and detecting item list changes across state updates."
+              },
+              "text": {
+                "type": "string",
+                "description": "Text to display. Scrolls horizontally if wider than 128px. Truncated at 500 characters."
+              },
+              "priority": {
+                "type": "integer",
+                "description": "Display priority. Items are shown in descending priority order (highest first)."
+              }
+            }
+          },
+          "uniqueItems": true
+        }
+      }
+    },
+    "override": {
+      "type": "object",
+      "description": "Override/alert system. When active, replaces line2 item rotation with a single alert message.",
+      "required": ["active"],
+      "additionalProperties": false,
+      "properties": {
+        "active": {
+          "type": "boolean",
+          "description": "Whether the override is active. When true, override.text replaces line2 rotation."
+        },
+        "text": {
+          "type": "string",
+          "default": "",
+          "description": "Alert message to display. Scrolls horizontally if wider than 128px."
+        },
+        "expires_at": {
+          "type": ["string", "null"],
+          "format": "date-time",
+          "default": null,
+          "description": "ISO 8601 timestamp when the override auto-expires and rotation resumes. Null means no auto-expiry (requires explicit override.active=false to clear). Naive timestamps are assumed UTC."
+        }
+      }
+    }
+  }
+}
