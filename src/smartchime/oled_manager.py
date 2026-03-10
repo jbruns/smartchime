@@ -58,6 +58,8 @@ class OLEDManager:
     BURN_IN_REFRESH_INTERVAL = 300
     BURN_IN_SLIDE_FRAMES = 10
     BURN_IN_BLANK_FRAMES = 4
+    FALLBACK_LINE1 = "No OLED state"
+    FALLBACK_LINE2 = "Awaiting MQTT..."
 
     def __init__(self, spi_port=0, spi_device=0):
         """Initialize the OLED display manager.
@@ -127,8 +129,9 @@ class OLEDManager:
         # Scroll performance: cached message width
         self._cached_msg_width = 0
 
-        # v2 contract state (None = no state received yet, defaults to clock+motion)
+        # v2 contract state (None = no state received yet)
         self._v2_state: V2State | None = None
+        self._fallback_warning_shown = False
         self._last_rendered_scroll_pos = -1
 
         # Burn-in prevention state
@@ -211,13 +214,21 @@ class OLEDManager:
         If the display is in an overlay mode (volume, centered), the v2 state is stored
         and will be applied when the overlay reverts to default.
 
+        On validation failure, shows an error on the OLED and re-raises.
+
         Args:
             payload (dict): The v2 contract JSON payload.
 
         Raises:
             ValueError: If the payload is invalid or missing required fields.
         """
-        parsed = self._parse_v2_payload(payload)
+        try:
+            parsed = self._parse_v2_payload(payload)
+        except ValueError:
+            self.logger.error("Invalid v2 OLED payload — displaying error on OLED")
+            with self._state_lock:
+                self.set_mode(self.MODE_CENTERED, "OLED state error", "Bad MQTT payload")
+            raise
 
         with self._state_lock:
             old_state = self._v2_state
@@ -231,6 +242,7 @@ class OLEDManager:
                 parsed.last_rotation_time = old_state.last_rotation_time
 
             self._v2_state = parsed
+            self._fallback_warning_shown = False
 
             # Apply device-level controls
             try:
@@ -246,15 +258,21 @@ class OLEDManager:
             except Exception as e:
                 self.logger.error(f"Failed to set display active state: {e}")
 
-            # If in default mode, switch to v2-driven content immediately
+            # Switch to v2-driven content
+            # If display is showing the fallback warning (centered without a timer),
+            # force back to default mode. Otherwise, preserve active overlays.
+            if self.current_mode == self.MODE_CENTERED and self.mode_timer is None:
+                self.current_mode = self.MODE_DEFAULT
             if self.current_mode == self.MODE_DEFAULT:
                 self._apply_v2_content()
 
             self.status_update_needed = True
             self.content_update_needed = True
 
-        self.logger.info(f"Applied v2 state: active={parsed.active}, line1={parsed.line1_modes}, "
-                         f"items={len(parsed.items)}, override={parsed.override_active}")
+        self.logger.info(
+            f"Applied v2 state: active={parsed.active}, line1={parsed.line1_modes}, "
+            f"items={len(parsed.items)}, override={parsed.override_active}"
+        )
 
     def _parse_v2_payload(self, payload):
         """Parse and validate a v2 contract payload.
@@ -467,14 +485,17 @@ class OLEDManager:
                 self._start_burn_in_refresh()
                 return
 
+            # Fallback: no v2 state received yet — show warning
+            if self._v2_state is None and self.current_mode == self.MODE_DEFAULT:
+                if not self._fallback_warning_shown:
+                    self.logger.warning("No v2 OLED state received — displaying fallback warning")
+                    self._fallback_warning_shown = True
+                    self.set_mode(self.MODE_CENTERED, self.FALLBACK_LINE1, self.FALLBACK_LINE2)
+                return
+
             # v2 override expiry check
             v2 = self._v2_state
-            if (
-                v2
-                and v2.override_active
-                and v2.override_expires_at
-                and datetime.now(UTC) >= v2.override_expires_at
-            ):
+            if v2 and v2.override_active and v2.override_expires_at and datetime.now(UTC) >= v2.override_expires_at:
                 self.logger.info("v2 override expired, reverting to rotation")
                 self._v2_state.override_active = False
                 if self.current_mode == self.MODE_DEFAULT:
@@ -490,8 +511,8 @@ class OLEDManager:
             ):
                 elapsed = now - self._v2_state.last_rotation_time
                 if elapsed >= self._v2_state.rotate_seconds:
-                    self._v2_state.current_item_index = (
-                        (self._v2_state.current_item_index + 1) % len(self._v2_state.items)
+                    self._v2_state.current_item_index = (self._v2_state.current_item_index + 1) % len(
+                        self._v2_state.items
                     )
                     self._v2_state.last_rotation_time = now
                     item = self._v2_state.items[self._v2_state.current_item_index]

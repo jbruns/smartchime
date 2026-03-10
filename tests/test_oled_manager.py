@@ -550,3 +550,48 @@ class TestV2StatusBarRendering:
         assert snap["motion_active"] is False
         assert snap["last_motion_time"] is None
         assert snap["v2_state"] is None
+
+
+class TestV2Fallback:
+    def test_fallback_shown_when_no_v2_state(self, mgr):
+        """Before any v2 message arrives, update_display shows a fallback warning."""
+        assert mgr._v2_state is None
+        mgr.update_display()
+        assert mgr._fallback_warning_shown is True
+        assert mgr.current_mode == mgr.MODE_CENTERED
+        assert mgr.line1 == mgr.FALLBACK_LINE1
+        assert mgr.line2 == mgr.FALLBACK_LINE2
+
+    def test_fallback_warning_logged_once(self, mgr):
+        """The fallback warning log only fires on the first cycle."""
+        mgr.update_display()
+        assert mgr._fallback_warning_shown is True
+        # Second call should not re-log (flag already set)
+        mgr.update_display()
+        assert mgr._fallback_warning_shown is True
+
+    def test_fallback_cleared_on_valid_v2(self, mgr):
+        """A valid v2 message clears the fallback and switches to v2 content."""
+        mgr.update_display()
+        assert mgr._fallback_warning_shown is True
+        mgr.apply_v2_state(_make_v2_payload())
+        assert mgr._fallback_warning_shown is False
+        assert mgr._v2_state is not None
+        assert mgr.current_mode == mgr.MODE_DEFAULT
+
+    def test_invalid_payload_shows_error_on_oled(self, mgr):
+        """An invalid v2 payload shows an error message on the OLED."""
+        with pytest.raises(ValueError):
+            mgr.apply_v2_state({"version": 99})
+        assert mgr.current_mode == mgr.MODE_CENTERED
+        assert mgr.line1 == "OLED state error"
+        assert mgr.line2 == "Bad MQTT payload"
+
+    def test_invalid_payload_does_not_clear_fallback(self, mgr):
+        """An invalid payload doesn't mark v2 as received."""
+        mgr.update_display()
+        assert mgr._fallback_warning_shown is True
+        with pytest.raises(ValueError):
+            mgr.apply_v2_state({"version": 1})
+        assert mgr._v2_state is None
+        assert mgr._fallback_warning_shown is True
