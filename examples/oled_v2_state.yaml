@@ -4,9 +4,22 @@
 # Uses an HA script so any automation (doorbell, motion, schedule) can call it
 # to republish the current state.
 #
+# Time-of-day display schedule (configurable via input_datetime helpers):
+#   - Night mode:  display OFF            (default: 11:00 PM)
+#   - Morning:     display ON, dim        (default:  6:00 AM, contrast 0.15)
+#   - Day:         display ON, normal     (default:  8:00 AM, contrast 0.5)
+#   - Evening:     display ON, dim        (default:  8:00 PM, contrast 0.2)
+#
+# Required HA helpers (create in Settings > Devices > Helpers):
+#   input_datetime.smartchime_time_morning   (time only, default 06:00)
+#   input_datetime.smartchime_time_day       (time only, default 08:00)
+#   input_datetime.smartchime_time_evening   (time only, default 20:00)
+#   input_datetime.smartchime_time_night     (time only, default 23:00)
+#   input_number.smartchime_contrast_morning (0-1 slider, default 0.15)
+#   input_number.smartchime_contrast_day     (0-1 slider, default 0.5)
+#   input_number.smartchime_contrast_evening (0-1 slider, default 0.2)
+#
 # Replace placeholder entities with your own:
-#   - input_boolean.smartchime_oled_active
-#   - input_number.smartchime_oled_contrast
 #   - binary_sensor.front_door_person_occupancy
 #   - sensor.front_door_last_motion
 #   - lock.front_door_lock
@@ -33,8 +46,22 @@ script:
           payload: >-
             {
               "version": 2,
-              "active": {{ states('input_boolean.smartchime_oled_active') == 'on' | tojson }},
-              "contrast": {{ states('input_number.smartchime_oled_contrast') | float(0.2) }},
+              {% set t_morning = states('input_datetime.smartchime_time_morning') | default('06:00:00', true) %}
+              {% set t_day     = states('input_datetime.smartchime_time_day')     | default('08:00:00', true) %}
+              {% set t_evening = states('input_datetime.smartchime_time_evening') | default('20:00:00', true) %}
+              {% set t_night   = states('input_datetime.smartchime_time_night')   | default('23:00:00', true) %}
+              {% set now_time  = now().strftime('%H:%M:%S') %}
+              {% if now_time >= t_night or now_time < t_morning %}
+                {% set period = 'night' %}
+              {% elif now_time >= t_evening %}
+                {% set period = 'evening' %}
+              {% elif now_time >= t_day %}
+                {% set period = 'day' %}
+              {% else %}
+                {% set period = 'morning' %}
+              {% endif %}
+              "active": {{ (period != 'night') | tojson }},
+              "contrast": {% if period == 'morning' %}{{ states('input_number.smartchime_contrast_morning') | float(0.15) }}{% elif period == 'day' %}{{ states('input_number.smartchime_contrast_day') | float(0.5) }}{% elif period == 'evening' %}{{ states('input_number.smartchime_contrast_evening') | float(0.2) }}{% else %}0{% endif %},
               "line1": {
                 "mode": "clock, motion",
                 "motion": {
@@ -157,12 +184,31 @@ automation:
       - action: script.smartchime_publish_oled_state
     mode: single
 
-  - alias: "[Smartchime] OLED State - Display Settings Change"
-    description: "Republish OLED state when display active/contrast settings change"
+  - alias: "[Smartchime] OLED State - Display Schedule Transition"
+    description: "Republish OLED state at each time-of-day transition (morning, day, evening, night)"
     triggers:
-      - entity_id: input_boolean.smartchime_oled_active
-        trigger: state
-      - entity_id: input_number.smartchime_oled_contrast
+      - trigger: time
+        at:
+          - input_datetime.smartchime_time_morning
+          - input_datetime.smartchime_time_day
+          - input_datetime.smartchime_time_evening
+          - input_datetime.smartchime_time_night
+    conditions: []
+    actions:
+      - action: script.smartchime_publish_oled_state
+    mode: single
+
+  - alias: "[Smartchime] OLED State - Schedule Settings Change"
+    description: "Republish OLED state when time or contrast settings are adjusted"
+    triggers:
+      - entity_id:
+          - input_datetime.smartchime_time_morning
+          - input_datetime.smartchime_time_day
+          - input_datetime.smartchime_time_evening
+          - input_datetime.smartchime_time_night
+          - input_number.smartchime_contrast_morning
+          - input_number.smartchime_contrast_day
+          - input_number.smartchime_contrast_evening
         trigger: state
     conditions: []
     actions:
