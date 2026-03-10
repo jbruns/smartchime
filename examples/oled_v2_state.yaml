@@ -1,0 +1,170 @@
+# Smartchime OLED v2 State Automation
+#
+# Publishes a full OLED display state snapshot to smartchime/display/oled.
+# Uses an HA script so any automation (doorbell, motion, schedule) can call it
+# to republish the current state.
+#
+# Replace placeholder entities with your own:
+#   - input_boolean.smartchime_oled_active
+#   - input_number.smartchime_oled_contrast
+#   - binary_sensor.front_door_person_occupancy
+#   - sensor.front_door_last_motion
+#   - lock.front_door_lock
+#   - sensor.outdoor_temperature
+#   - sensor.weather_condition
+#   - calendar.personal  (for next event)
+#   - sensor.mail_packages_arriving  (for package count)
+#   - binary_sensor.front_door_doorbell_visitor (doorbell override)
+
+script:
+  smartchime_publish_oled_state:
+    alias: "[Smartchime] Publish OLED State"
+    description: >-
+      Build and publish a v2 OLED state snapshot.
+      Call this script from any automation that changes OLED-relevant state.
+    mode: queued
+    max: 5
+    sequence:
+      - action: mqtt.publish
+        data:
+          topic: smartchime/display/oled
+          retain: true
+          qos: "1"
+          payload: >-
+            {
+              "version": 2,
+              "active": {{ states('input_boolean.smartchime_oled_active') == 'on' | tojson }},
+              "contrast": {{ states('input_number.smartchime_oled_contrast') | float(0.2) }},
+              "line1": {
+                "mode": "clock, motion",
+                "motion": {
+                  "active": {{ states('binary_sensor.front_door_person_occupancy') == 'on' | tojson }},
+                  "timestamp": "{{ states('sensor.front_door_last_motion') | default(now().isoformat(), true) }}"
+                }
+              },
+              "line2": {
+                "mode": "rotate",
+                "rotate_seconds": 10,
+                "items": [
+                  {% set ns = namespace(items=[]) %}
+                  {% if states('lock.front_door_lock') in ['locked', 'unlocked'] %}
+                    {% set lock_text = 'Front Door Locked' if is_state('lock.front_door_lock', 'locked') else 'Front Door Unlocked!' %}
+                    {% set ns.items = ns.items + ['{"key": "security", "text": "' ~ lock_text ~ '", "priority": 90}'] %}
+                  {% endif %}
+                  {% if states('sensor.outdoor_temperature') not in ['unknown', 'unavailable'] %}
+                    {% set temp = states('sensor.outdoor_temperature') | round(0) | int %}
+                    {% set condition = states('sensor.weather_condition') | default('') | capitalize %}
+                    {% set ns.items = ns.items + ['{"key": "weather", "text": "' ~ temp ~ '° ' ~ condition ~ '", "priority": 70}'] %}
+                  {% endif %}
+                  {% if states('calendar.personal') == 'on' %}
+                    {% set event_title = state_attr('calendar.personal', 'message') | default('Event') %}
+                    {% set event_start = state_attr('calendar.personal', 'start_time') %}
+                    {% if event_start %}
+                      {% set start_dt = event_start | as_datetime %}
+                      {% set time_str = start_dt.strftime('%-I:%M%p') if start_dt else '' %}
+                      {% set ns.items = ns.items + ['{"key": "event", "text": "Next: ' ~ event_title ~ ' ' ~ time_str ~ '", "priority": 60}'] %}
+                    {% else %}
+                      {% set ns.items = ns.items + ['{"key": "event", "text": "Next: ' ~ event_title ~ '", "priority": 60}'] %}
+                    {% endif %}
+                  {% endif %}
+                  {% if states('sensor.mail_packages_arriving') | int(0) > 0 %}
+                    {% set count = states('sensor.mail_packages_arriving') | int %}
+                    {% set ns.items = ns.items + ['{"key": "package", "text": "' ~ count ~ ' Package' ~ ('s' if count > 1 else '') ~ ' Arriving", "priority": 50}'] %}
+                  {% endif %}
+                  {{ ns.items | join(', ') }}
+                ]
+              },
+              "override": {
+                "active": {{ states('binary_sensor.front_door_doorbell_visitor') == 'on' | tojson }},
+                "text": "{% if is_state('binary_sensor.front_door_doorbell_visitor', 'on') %}Someone's at the door!{% elif is_state('binary_sensor.front_door_person_occupancy', 'on') %}Person detected!{% endif %}",
+                "expires_at": {% if is_state('binary_sensor.front_door_doorbell_visitor', 'on') %}"{{ (now() + timedelta(minutes=2)).isoformat() }}"{% else %}null{% endif %}
+              }
+            }
+
+automation:
+  # --- Triggers that republish OLED state ---
+
+  - alias: "[Smartchime] OLED State - Motion Change"
+    description: "Republish OLED state when motion sensor changes"
+    triggers:
+      - entity_id: binary_sensor.front_door_person_occupancy
+        trigger: state
+    conditions: []
+    actions:
+      - action: script.smartchime_publish_oled_state
+    mode: single
+
+  - alias: "[Smartchime] OLED State - Doorbell Ring"
+    description: "Republish OLED state when doorbell rings (sets override)"
+    triggers:
+      - entity_id: binary_sensor.front_door_doorbell_visitor
+        trigger: state
+    conditions: []
+    actions:
+      - action: script.smartchime_publish_oled_state
+    mode: single
+
+  - alias: "[Smartchime] OLED State - Lock Change"
+    description: "Republish OLED state when lock state changes"
+    triggers:
+      - entity_id: lock.front_door_lock
+        trigger: state
+    conditions: []
+    actions:
+      - action: script.smartchime_publish_oled_state
+    mode: single
+
+  - alias: "[Smartchime] OLED State - Weather Update"
+    description: "Republish OLED state when weather changes"
+    triggers:
+      - entity_id: sensor.outdoor_temperature
+        trigger: state
+      - entity_id: sensor.weather_condition
+        trigger: state
+    conditions: []
+    actions:
+      - delay: "00:00:05"  # debounce rapid weather updates
+      - action: script.smartchime_publish_oled_state
+    mode: restart
+
+  - alias: "[Smartchime] OLED State - Calendar Update"
+    description: "Republish OLED state when next calendar event changes"
+    triggers:
+      - entity_id: calendar.personal
+        trigger: state
+    conditions: []
+    actions:
+      - action: script.smartchime_publish_oled_state
+    mode: single
+
+  - alias: "[Smartchime] OLED State - Package Update"
+    description: "Republish OLED state when package count changes"
+    triggers:
+      - entity_id: sensor.mail_packages_arriving
+        trigger: state
+    conditions: []
+    actions:
+      - action: script.smartchime_publish_oled_state
+    mode: single
+
+  - alias: "[Smartchime] OLED State - Periodic Refresh"
+    description: "Republish OLED state every 5 minutes as a baseline refresh"
+    triggers:
+      - trigger: time_pattern
+        minutes: "/5"
+    conditions: []
+    actions:
+      - action: script.smartchime_publish_oled_state
+    mode: single
+
+  - alias: "[Smartchime] OLED State - Display Settings Change"
+    description: "Republish OLED state when display active/contrast settings change"
+    triggers:
+      - entity_id: input_boolean.smartchime_oled_active
+        trigger: state
+      - entity_id: input_number.smartchime_oled_contrast
+        trigger: state
+    conditions: []
+    actions:
+      - action: script.smartchime_publish_oled_state
+    mode: single
