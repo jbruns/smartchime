@@ -27,12 +27,8 @@ mqtt:
     # Payload format: {"active": bool, "timestamp": "ISO8601", "video_url": "string"}
     motion: smartchime/motion/detected
 
-    # Topic for displaying custom messages on OLED
-    # Payload format: {"text": "string"} or plain string
-    message: smartchime/display/message
-
     # Topic for v2 OLED state contract messages
-    # Payload format: see docs/oled-v2-message-contract.json
+    # Payload format: see docs/oled-v2-message-contract.schema.json
     oled_state: smartchime/display/oled
 
 # Audio System Configuration

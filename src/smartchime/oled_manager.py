@@ -117,8 +117,6 @@ class OLEDManager:
         self.line2 = ""
         self.volume_level = 0.0
         self.volume_muted = False
-        self.last_motion_time = None
-        self.motion_active = False
         self.scroll_position = 0
         self.scroll_start_time = None
         self.scroll_paused = False
@@ -129,7 +127,7 @@ class OLEDManager:
         # Scroll performance: cached message width
         self._cached_msg_width = 0
 
-        # v2 contract state (None = legacy mode, no v2 message received yet)
+        # v2 contract state (None = no state received yet, defaults to clock+motion)
         self._v2_state: V2State | None = None
         self._last_rendered_scroll_pos = -1
 
@@ -411,28 +409,6 @@ class OLEDManager:
         self._last_rendered_scroll_pos = -1
         self.content_update_needed = True
 
-    def set_scrolling_message(self, message):
-        """Set the scrolling message for default mode.
-
-        Args:
-            message (str): Message to scroll.
-        """
-        with self._state_lock:
-            if self.current_mode != self.MODE_DEFAULT:
-                return
-
-            if len(message) > self.MAX_SCROLL_MESSAGE_LENGTH:
-                self.logger.warning(f"Message truncated from {len(message)} to {self.MAX_SCROLL_MESSAGE_LENGTH} chars")
-                message = message[: self.MAX_SCROLL_MESSAGE_LENGTH - 1] + "…"
-
-            self.current_message = message
-            self._cached_msg_width = self.scroll_font.getlength(message) if message else 0
-            self.scroll_position = 0
-            self.scroll_start_time = None
-            self.scroll_paused = False
-            self._last_rendered_scroll_pos = -1
-            self.content_update_needed = True
-
     def set_temporary_message(self, message, duration=None):
         """Set a temporary scrolling message with auto-revert.
 
@@ -476,24 +452,6 @@ class OLEDManager:
 
             self._cancel_temp_message()
             self._restore_original_message()
-
-    def update_motion_status(self, active=None, last_time=None):
-        """Update motion detection status.
-
-        Args:
-            active (bool): Current motion state.
-            last_time (datetime): Time of last detected motion.
-        """
-        with self._state_lock:
-            update_needed = False
-            if active is not None and active != self.motion_active:
-                self.motion_active = active
-                update_needed = True
-            if last_time is not None and last_time != self.last_motion_time:
-                self.last_motion_time = last_time
-                update_needed = True
-            if update_needed:
-                self.status_update_needed = True
 
     def update_display(self):
         """Update the display, optimizing updates by section."""
@@ -575,8 +533,8 @@ class OLEDManager:
             "line2": self.line2,
             "volume_level": self.volume_level,
             "volume_muted": self.volume_muted,
-            "motion_active": v2.motion_active if v2 else self.motion_active,
-            "last_motion_time": v2.motion_timestamp if v2 else self.last_motion_time,
+            "motion_active": v2.motion_active if v2 else False,
+            "last_motion_time": v2.motion_timestamp if v2 else None,
             "status_y_offset": self._status_y_offset,
             "v2_state": v2,
         }
@@ -587,7 +545,9 @@ class OLEDManager:
             draw.rectangle((0, 0, self.device.width - 1, self.device.height - 1), outline=0, fill=0)
 
     def _render_status_content_image(self, snap=None):
-        """Render status bar content based on v2 line1 modes or legacy layout.
+        """Render status bar content based on v2 line1 modes.
+
+        Falls back to clock+motion before the first v2 message is received.
 
         Args:
             snap (dict): Optional state snapshot. If None, reads live state (must hold lock).
@@ -833,8 +793,8 @@ class OLEDManager:
 
     def _format_motion_time(self, snap=None):
         """Format time since last motion."""
-        motion_active = snap["motion_active"] if snap else self.motion_active
-        last_motion_time = snap["last_motion_time"] if snap else self.last_motion_time
+        motion_active = snap["motion_active"] if snap else False
+        last_motion_time = snap["last_motion_time"] if snap else None
         if motion_active:
             return "now"
         if last_motion_time is None:
@@ -846,9 +806,15 @@ class OLEDManager:
         return f"{minutes // 60}h"
 
     def _restore_original_message(self):
-        """Restore the original message after temporary message expires."""
+        """Restore display content after temporary message expires.
+
+        If v2 state is active, restores the current v2 rotation item.
+        Otherwise, restores the previously saved original message.
+        """
         with self._state_lock:
-            if self.original_message is not None:
+            if self._v2_state is not None:
+                self._apply_v2_content()
+            elif self.original_message is not None:
                 self.current_message = self.original_message
                 self._cached_msg_width = self.scroll_font.getlength(self.current_message) if self.current_message else 0
                 self.scroll_position = 0

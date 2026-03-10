@@ -115,21 +115,6 @@ class TestHandleEventMessage:
 
 
 # ---------------------------------------------------------------------------
-# handle_message
-# ---------------------------------------------------------------------------
-
-
-class TestHandleMessage:
-    def test_dict_payload_extracts_text(self, system):
-        system.handle_message({"text": "hello"})
-        system.oled.set_scrolling_message.assert_called_once_with("hello")
-
-    def test_string_payload_used_directly(self, system):
-        system.handle_message("hello")
-        system.oled.set_scrolling_message.assert_called_once_with("hello")
-
-
-# ---------------------------------------------------------------------------
 # Sound selection
 # ---------------------------------------------------------------------------
 
@@ -166,7 +151,6 @@ class TestOnConnect:
         assert topics == {
             "smartchime/doorbell/ring",
             "smartchime/motion/detected",
-            "smartchime/display/message",
             "smartchime/display/oled",
         }
 
@@ -217,13 +201,6 @@ class TestOnMessage:
         with patch.object(system, "handle_event_message") as mock_hem:
             system.on_message(None, None, msg)
             mock_hem.assert_called_once_with("smartchime/doorbell/ring", payload)
-
-    def test_routes_message_topic(self, system):
-        payload = {"text": "hello"}
-        msg = self._make_msg("smartchime/display/message", payload)
-        with patch.object(system, "handle_message") as mock_hm:
-            system.on_message(None, None, msg)
-            mock_hm.assert_called_once_with(payload)
 
     def test_invalid_json(self, system):
         msg = MagicMock()

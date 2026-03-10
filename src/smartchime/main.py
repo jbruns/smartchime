@@ -240,7 +240,6 @@ class SmartchimeSystem:
             topics = [
                 (self.config["mqtt"]["topics"]["doorbell"], 0),
                 (self.config["mqtt"]["topics"]["motion"], 0),
-                (self.config["mqtt"]["topics"]["message"], 0),
                 (self.config["mqtt"]["topics"]["oled_state"], 0),
             ]
             client.subscribe(topics)
@@ -326,22 +325,10 @@ class SmartchimeSystem:
                 self.handle_event_message(msg.topic, payload)
             elif msg.topic == self.config["mqtt"]["topics"]["oled_state"]:
                 self.handle_oled_state(payload)
-            elif msg.topic == self.config["mqtt"]["topics"]["message"]:
-                self.handle_message(payload)
 
         except json.JSONDecodeError as e:
             self.logger.warning(f"Invalid JSON received on topic {msg.topic}: {e}")
             self.logger.debug(f"Raw payload: {msg.payload}")
-
-    def handle_message(self, payload):
-        """Handle and display a message payload (v1 legacy).
-
-        Args:
-            payload (dict): The message payload.
-        """
-        message = payload["text"] if isinstance(payload, dict) and "text" in payload else str(payload)
-        self.logger.info(f"Displaying message: {message}")
-        self.oled.set_scrolling_message(message)
 
     def handle_oled_state(self, payload):
         """Handle a v2 OLED state contract message.

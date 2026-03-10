@@ -65,7 +65,6 @@ def sample_config(tmp_path):
             "topics": {
                 "doorbell": "smartchime/doorbell/ring",
                 "motion": "smartchime/motion/detected",
-                "message": "smartchime/display/message",
                 "oled_state": "smartchime/display/oled",
             },
         },

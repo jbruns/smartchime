@@ -50,25 +50,25 @@ class TestOLEDManager:
     # -- _format_motion_time --------------------------------------------------
 
     def test_format_motion_time_active(self, mgr):
-        mgr.motion_active = True
-        assert mgr._format_motion_time() == "now"
+        snap = {"motion_active": True, "last_motion_time": None}
+        assert mgr._format_motion_time(snap) == "now"
 
     def test_format_motion_time_no_last_time(self, mgr):
-        mgr.motion_active = False
-        mgr.last_motion_time = None
-        assert mgr._format_motion_time() == "--"
+        snap = {"motion_active": False, "last_motion_time": None}
+        assert mgr._format_motion_time(snap) == "--"
 
     def test_format_motion_time_minutes(self, mgr):
-        mgr.motion_active = False
-        mgr.last_motion_time = datetime.now(UTC) - timedelta(minutes=5)
-        result = mgr._format_motion_time()
+        snap = {"motion_active": False, "last_motion_time": datetime.now(UTC) - timedelta(minutes=5)}
+        result = mgr._format_motion_time(snap)
         assert result == "5m"
 
     def test_format_motion_time_hours(self, mgr):
-        mgr.motion_active = False
-        mgr.last_motion_time = datetime.now(UTC) - timedelta(hours=2, minutes=30)
-        result = mgr._format_motion_time()
+        snap = {"motion_active": False, "last_motion_time": datetime.now(UTC) - timedelta(hours=2, minutes=30)}
+        result = mgr._format_motion_time(snap)
         assert result == "2h"
+
+    def test_format_motion_time_defaults_without_snap(self, mgr):
+        assert mgr._format_motion_time() == "--"
 
     # -- set_mode -------------------------------------------------------------
 
@@ -104,23 +104,6 @@ class TestOLEDManager:
         old_timer.cancel.assert_called_once()
         assert mgr.mode_timer is new_timer
 
-    # -- set_scrolling_message ------------------------------------------------
-
-    def test_set_scrolling_message(self, mgr):
-        mgr.current_mode = mgr.MODE_DEFAULT
-        mgr.set_scrolling_message("Hello World")
-        assert mgr.current_message == "Hello World"
-        assert mgr.scroll_position == 0
-        assert mgr.scroll_start_time is None
-        assert mgr.scroll_paused is False
-        assert mgr.content_update_needed is True
-
-    def test_set_scrolling_message_ignored_in_centered_mode(self, mgr):
-        mgr.current_mode = mgr.MODE_CENTERED
-        mgr.current_message = "original"
-        mgr.set_scrolling_message("new message")
-        assert mgr.current_message == "original"
-
     # -- set_temporary_message / clear_temporary_message ----------------------
 
     def test_set_temporary_message(self, mgr):
@@ -140,24 +123,6 @@ class TestOLEDManager:
         mgr.clear_temporary_message()
         assert mgr.current_message == "original"
         assert mgr.temp_message is None
-
-    # -- update_motion_status -------------------------------------------------
-
-    def test_update_motion_status(self, mgr):
-        mgr.status_update_needed = False
-        now = datetime.now(UTC)
-        mgr.update_motion_status(active=True, last_time=now)
-        assert mgr.motion_active is True
-        assert mgr.last_motion_time == now
-        assert mgr.status_update_needed is True
-
-    def test_update_motion_status_no_change(self, mgr):
-        now = datetime.now(UTC)
-        mgr.motion_active = True
-        mgr.last_motion_time = now
-        mgr.status_update_needed = False
-        mgr.update_motion_status(active=True, last_time=now)
-        assert mgr.status_update_needed is False
 
     # -- _update_scroll_state -------------------------------------------------
 
@@ -571,21 +536,6 @@ class TestV2OverlayInteraction:
         assert mgr._v2_state.items[0].key == "security"
 
 
-class TestV2BackwardCompatibility:
-    def test_v1_message_works_without_v2(self, mgr):
-        """v1 messages should still work when no v2 state has been applied."""
-        mgr.set_scrolling_message("Hello from v1")
-        assert mgr.current_message == "Hello from v1"
-        assert mgr._v2_state is None
-
-    def test_v1_message_works_with_v2_in_overlay(self, mgr):
-        """v1 messages are ignored in non-default modes, same as before."""
-        mgr.apply_v2_state(_make_v2_payload())
-        mgr.set_mode(mgr.MODE_CENTERED, line1="Test")
-        mgr.set_scrolling_message("should be ignored")
-        assert mgr.current_mode == mgr.MODE_CENTERED
-
-
 class TestV2StatusBarRendering:
     def test_snapshot_includes_v2_motion(self, mgr):
         payload = _make_v2_payload()
@@ -595,9 +545,8 @@ class TestV2StatusBarRendering:
         assert snap["motion_active"] is True
         assert snap["v2_state"] is not None
 
-    def test_snapshot_uses_legacy_motion_without_v2(self, mgr):
-        mgr.motion_active = True
-        mgr.last_motion_time = datetime.now(UTC)
+    def test_snapshot_defaults_without_v2(self, mgr):
         snap = mgr._snapshot_render_state()
-        assert snap["motion_active"] is True
+        assert snap["motion_active"] is False
+        assert snap["last_motion_time"] is None
         assert snap["v2_state"] is None
