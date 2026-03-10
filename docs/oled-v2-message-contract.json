@@ -1,0 +1,27 @@
+{
+  "version": 2,
+  "active": true,
+  "contrast": 0.2,
+  "line1": {
+    "mode": "clock, motion",
+    "motion": {
+        "active": false,
+        "timestamp": "2026-03-10T15:00:00+00:00"
+    }
+  },
+  "line2": {
+    "mode": "rotate",
+    "rotate_seconds": 10,
+    "items": [
+      {"key": "security", "text": "Front Door Locked", "priority": 90},
+      {"key": "weather", "text": "58° Rain", "priority": 70},
+      {"key": "event", "text": "Next: Dentist 3:30", "priority": 60},
+      {"key": "package", "text": "1 Package Waiting", "priority": 50}
+    ]
+  },
+  "override": {
+    "active": false,
+    "text": "",
+    "expires_at": null
+  }
+}

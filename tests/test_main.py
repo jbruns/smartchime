@@ -87,16 +87,18 @@ class TestHandleEventMessage:
         system.handle_event_message("smartchime/doorbell/ring", payload)
         system.audio.play_sound.assert_not_called()
 
-    def test_motion_active_updates_oled(self, system):
+    def test_motion_active_no_oled_calls(self, system):
+        """Motion events no longer directly update OLED — v2 contract handles it."""
         payload = {**self.VALID_PAYLOAD, "active": True}
         system.handle_event_message("smartchime/motion/detected", payload)
-        system.oled.update_motion_status.assert_called_once()
-        system.oled.set_temporary_message.assert_called_once_with("Person detected on doorbell camera!")
+        system.oled.update_motion_status.assert_not_called()
+        system.oled.set_temporary_message.assert_not_called()
 
-    def test_motion_inactive_clears_message(self, system):
+    def test_motion_inactive_no_oled_calls(self, system):
+        """Motion inactive events no longer directly update OLED."""
         payload = {**self.VALID_PAYLOAD, "active": False}
         system.handle_event_message("smartchime/motion/detected", payload)
-        system.oled.clear_temporary_message.assert_called_once()
+        system.oled.clear_temporary_message.assert_not_called()
 
     def test_doorbell_active_plays_sound_and_video(self, system):
         payload = {**self.VALID_PAYLOAD, "active": True}
@@ -107,8 +109,9 @@ class TestHandleEventMessage:
     def test_doorbell_inactive_stops_video(self, system):
         payload = {**self.VALID_PAYLOAD, "active": False}
         system.handle_event_message("smartchime/doorbell/ring", payload)
-        system.oled.clear_temporary_message.assert_called_once()
         system.hdmi.stop_video.assert_called_once()
+        # OLED calls removed — v2 contract handles display
+        system.oled.clear_temporary_message.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
@@ -160,7 +163,12 @@ class TestOnConnect:
         client.subscribe.assert_called_once()
         subscribed = client.subscribe.call_args[0][0]
         topics = {t[0] for t in subscribed}
-        assert topics == {"smartchime/doorbell/ring", "smartchime/motion/detected", "smartchime/display/message"}
+        assert topics == {
+            "smartchime/doorbell/ring",
+            "smartchime/motion/detected",
+            "smartchime/display/message",
+            "smartchime/display/oled",
+        }
 
     def test_failed_connection(self, system):
         client = MagicMock()
@@ -222,3 +230,32 @@ class TestOnMessage:
         msg.topic = "smartchime/doorbell/ring"
         msg.payload = b"not json"
         system.on_message(None, None, msg)
+
+    def test_routes_oled_state_topic(self, system):
+        payload = {"version": 2, "active": True}
+        msg = self._make_msg("smartchime/display/oled", payload)
+        with patch.object(system, "handle_oled_state") as mock_hos:
+            system.on_message(None, None, msg)
+            mock_hos.assert_called_once_with(payload)
+
+
+# ---------------------------------------------------------------------------
+# handle_oled_state
+# ---------------------------------------------------------------------------
+
+
+class TestHandleOledState:
+    def test_calls_apply_v2_state(self, system):
+        payload = {"version": 2, "active": True}
+        system.handle_oled_state(payload)
+        system.oled.apply_v2_state.assert_called_once_with(payload)
+
+    def test_catches_value_error(self, system):
+        system.oled.apply_v2_state.side_effect = ValueError("bad version")
+        system.handle_oled_state({"version": 99})
+        # Should not raise
+
+    def test_catches_runtime_error(self, system):
+        system.oled.apply_v2_state.side_effect = RuntimeError("device error")
+        system.handle_oled_state({"version": 2})
+        # Should not raise

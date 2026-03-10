@@ -31,6 +31,10 @@ mqtt:
     # Payload format: {"text": "string"} or plain string
     message: smartchime/display/message
 
+    # Topic for v2 OLED state contract messages
+    # Payload format: see docs/oled-v2-message-contract.json
+    oled_state: smartchime/display/oled
+
 # Audio System Configuration
 audio:
   # Directory containing WAV sound files for doorbell

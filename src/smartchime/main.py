@@ -241,6 +241,7 @@ class SmartchimeSystem:
                 (self.config["mqtt"]["topics"]["doorbell"], 0),
                 (self.config["mqtt"]["topics"]["motion"], 0),
                 (self.config["mqtt"]["topics"]["message"], 0),
+                (self.config["mqtt"]["topics"]["oled_state"], 0),
             ]
             client.subscribe(topics)
             self.logger.info(f"Subscribed to topics: {[t[0] for t in topics]}")
@@ -289,15 +290,13 @@ class SmartchimeSystem:
             self.logger.info(f"Event message: topic={topic}, active={payload['active']}, time={event_time}")
 
             if topic == self.config["mqtt"]["topics"]["motion"]:
-                self.oled.update_motion_status(active=payload["active"], last_time=event_time)
                 if payload["active"]:
-                    self.oled.set_temporary_message("Person detected on doorbell camera!")
+                    self.logger.info("Motion detected — OLED state managed by v2 contract")
                 else:
-                    self.oled.clear_temporary_message()
+                    self.logger.info("Motion cleared — OLED state managed by v2 contract")
 
             if topic == self.config["mqtt"]["topics"]["doorbell"]:
                 if payload["active"]:
-                    self.oled.set_temporary_message("Someone's at the door!")
                     sound_file = (
                         self.available_sounds[self.current_sound_index] or self.config["audio"]["default_sound"]
                     )
@@ -305,7 +304,6 @@ class SmartchimeSystem:
                     video_url = payload["video_url"] or self.config["video"]["default_stream"]
                     self.hdmi.play_video(video_url)
                 else:
-                    self.oled.clear_temporary_message()
                     self.hdmi.stop_video()
 
         except Exception as e:
@@ -326,6 +324,8 @@ class SmartchimeSystem:
 
             if msg.topic in [self.config["mqtt"]["topics"]["doorbell"], self.config["mqtt"]["topics"]["motion"]]:
                 self.handle_event_message(msg.topic, payload)
+            elif msg.topic == self.config["mqtt"]["topics"]["oled_state"]:
+                self.handle_oled_state(payload)
             elif msg.topic == self.config["mqtt"]["topics"]["message"]:
                 self.handle_message(payload)
 
@@ -334,7 +334,7 @@ class SmartchimeSystem:
             self.logger.debug(f"Raw payload: {msg.payload}")
 
     def handle_message(self, payload):
-        """Handle and display a message payload.
+        """Handle and display a message payload (v1 legacy).
 
         Args:
             payload (dict): The message payload.
@@ -342,6 +342,19 @@ class SmartchimeSystem:
         message = payload["text"] if isinstance(payload, dict) and "text" in payload else str(payload)
         self.logger.info(f"Displaying message: {message}")
         self.oled.set_scrolling_message(message)
+
+    def handle_oled_state(self, payload):
+        """Handle a v2 OLED state contract message.
+
+        Args:
+            payload (dict): The v2 contract JSON payload.
+        """
+        try:
+            self.oled.apply_v2_state(payload)
+        except ValueError as e:
+            self.logger.warning(f"Invalid v2 OLED state: {e}")
+        except Exception as e:
+            self.logger.error(f"Error applying v2 OLED state: {e}", exc_info=True)
 
     def run(self):
         """Run the main loop of the Smartchime system, processing events and messages."""

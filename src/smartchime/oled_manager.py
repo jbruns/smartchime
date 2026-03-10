@@ -1,5 +1,6 @@
 import logging
 import time
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from os import path
 from threading import RLock, Timer
@@ -10,6 +11,35 @@ from luma.core.interface.serial import spi
 from luma.core.render import canvas
 from luma.oled.device import ssd1305
 from PIL import Image, ImageDraw, ImageFont
+
+
+@dataclass
+class V2Item:
+    """A single line2 rotation item."""
+
+    key: str
+    text: str
+    priority: int
+
+
+@dataclass
+class V2State:
+    """Parsed v2 contract state snapshot."""
+
+    active: bool
+    contrast: int  # 0–255 (converted from 0.0–1.0 on parse)
+    line1_modes: set  # subset of {"clock", "motion"}
+    motion_active: bool
+    motion_timestamp: datetime | None
+    line2_mode: str
+    rotate_seconds: float
+    items: list[V2Item] = field(default_factory=list)  # sorted by priority desc
+    override_active: bool = False
+    override_text: str = ""
+    override_expires_at: datetime | None = None
+    # Internal rotation tracking
+    current_item_index: int = 0
+    last_rotation_time: float = 0.0  # time.monotonic()
 
 
 class OLEDManager:
@@ -49,7 +79,7 @@ class OLEDManager:
             # self.device.command(0xDA, 0x12)  # Use alternate COM pin configuration
             # self.device._colstart += 4
             # self.device._colend += 4
-            ### 
+            ###
 
             self.composition = ImageComposition(self.device)
             status_image = Image.new("1", (self.device.width, 10))
@@ -98,6 +128,9 @@ class OLEDManager:
 
         # Scroll performance: cached message width
         self._cached_msg_width = 0
+
+        # v2 contract state (None = legacy mode, no v2 message received yet)
+        self._v2_state: V2State | None = None
         self._last_rendered_scroll_pos = -1
 
         # Burn-in prevention state
@@ -172,6 +205,211 @@ class OLEDManager:
 
             self.status_update_needed = True
             self.content_update_needed = True
+
+    def apply_v2_state(self, payload):
+        """Apply a v2 contract state snapshot from MQTT.
+
+        Validates the payload, parses all fields, and replaces the current v2 state.
+        If the display is in an overlay mode (volume, centered), the v2 state is stored
+        and will be applied when the overlay reverts to default.
+
+        Args:
+            payload (dict): The v2 contract JSON payload.
+
+        Raises:
+            ValueError: If the payload is invalid or missing required fields.
+        """
+        parsed = self._parse_v2_payload(payload)
+
+        with self._state_lock:
+            old_state = self._v2_state
+            items_changed = old_state is None or [i.key for i in old_state.items] != [i.key for i in parsed.items]
+
+            if items_changed:
+                parsed.current_item_index = 0
+                parsed.last_rotation_time = time.monotonic()
+            else:
+                parsed.current_item_index = old_state.current_item_index
+                parsed.last_rotation_time = old_state.last_rotation_time
+
+            self._v2_state = parsed
+
+            # Apply device-level controls
+            try:
+                self.device.contrast(parsed.contrast)
+            except Exception as e:
+                self.logger.error(f"Failed to set contrast: {e}")
+
+            try:
+                if parsed.active:
+                    self.device.show()
+                else:
+                    self.device.hide()
+            except Exception as e:
+                self.logger.error(f"Failed to set display active state: {e}")
+
+            # If in default mode, switch to v2-driven content immediately
+            if self.current_mode == self.MODE_DEFAULT:
+                self._apply_v2_content()
+
+            self.status_update_needed = True
+            self.content_update_needed = True
+
+        self.logger.info(f"Applied v2 state: active={parsed.active}, line1={parsed.line1_modes}, "
+                         f"items={len(parsed.items)}, override={parsed.override_active}")
+
+    def _parse_v2_payload(self, payload):
+        """Parse and validate a v2 contract payload.
+
+        Args:
+            payload (dict): Raw JSON payload.
+
+        Returns:
+            V2State: Parsed state object.
+
+        Raises:
+            ValueError: If validation fails.
+        """
+        if not isinstance(payload, dict):
+            raise ValueError(f"Expected dict payload, got {type(payload).__name__}")
+
+        version = payload.get("version")
+        if version != 2:
+            raise ValueError(f"Unsupported contract version: {version}")
+
+        # Required top-level fields
+        for field_name in ("active", "contrast", "line1", "line2", "override"):
+            if field_name not in payload:
+                raise ValueError(f"Missing required field: {field_name}")
+
+        active = bool(payload["active"])
+
+        contrast_raw = payload["contrast"]
+        if not isinstance(contrast_raw, (int, float)) or not (0.0 <= contrast_raw <= 1.0):
+            raise ValueError(f"contrast must be a number 0.0–1.0, got {contrast_raw}")
+        contrast = int(contrast_raw * 255)
+
+        # line1
+        line1 = payload["line1"]
+        if not isinstance(line1, dict) or "mode" not in line1:
+            raise ValueError("line1 must be a dict with 'mode' field")
+
+        raw_modes = {m.strip() for m in line1["mode"].split(",") if m.strip()}
+        valid_modes = {"clock", "motion"}
+        if not raw_modes:
+            raise ValueError("line1.mode must contain at least one mode")
+        invalid = raw_modes - valid_modes
+        if invalid:
+            raise ValueError(f"Invalid line1 modes: {invalid}")
+        line1_modes = raw_modes
+
+        # line1.motion (optional, required if "motion" in modes)
+        motion_active = False
+        motion_timestamp = None
+        if "motion" in line1_modes:
+            motion_data = line1.get("motion", {})
+            if not isinstance(motion_data, dict):
+                raise ValueError("line1.motion must be a dict")
+            motion_active = bool(motion_data.get("active", False))
+            ts_raw = motion_data.get("timestamp")
+            if ts_raw:
+                try:
+                    motion_timestamp = datetime.fromisoformat(ts_raw)
+                    if motion_timestamp.tzinfo is None:
+                        motion_timestamp = motion_timestamp.replace(tzinfo=UTC)
+                except (ValueError, TypeError):
+                    raise ValueError(f"Invalid motion timestamp: {ts_raw}") from None
+
+        # line2
+        line2 = payload["line2"]
+        if not isinstance(line2, dict) or "mode" not in line2:
+            raise ValueError("line2 must be a dict with 'mode' field")
+        line2_mode = line2["mode"]
+        if line2_mode != "rotate":
+            raise ValueError(f"Unsupported line2 mode: {line2_mode}")
+
+        rotate_seconds = line2.get("rotate_seconds", 10)
+        if not isinstance(rotate_seconds, (int, float)) or rotate_seconds <= 0:
+            raise ValueError(f"rotate_seconds must be a positive number, got {rotate_seconds}")
+
+        raw_items = line2.get("items", [])
+        if not isinstance(raw_items, list):
+            raise ValueError("line2.items must be a list")
+
+        items = []
+        seen_keys = set()
+        for item in raw_items:
+            if not isinstance(item, dict):
+                raise ValueError(f"Each line2 item must be a dict, got {type(item).__name__}")
+            for req in ("key", "text", "priority"):
+                if req not in item:
+                    raise ValueError(f"line2 item missing required field: {req}")
+            key = str(item["key"])
+            if key in seen_keys:
+                raise ValueError(f"Duplicate line2 item key: {key}")
+            seen_keys.add(key)
+            items.append(V2Item(key=key, text=str(item["text"]), priority=int(item["priority"])))
+
+        # Sort by priority descending
+        items.sort(key=lambda i: i.priority, reverse=True)
+
+        # override
+        override = payload["override"]
+        if not isinstance(override, dict):
+            raise ValueError("override must be a dict")
+
+        override_active = bool(override.get("active", False))
+        override_text = str(override.get("text", ""))
+        override_expires_at = None
+        expires_raw = override.get("expires_at")
+        if expires_raw:
+            try:
+                override_expires_at = datetime.fromisoformat(expires_raw)
+                if override_expires_at.tzinfo is None:
+                    override_expires_at = override_expires_at.replace(tzinfo=UTC)
+            except (ValueError, TypeError):
+                raise ValueError(f"Invalid override expires_at: {expires_raw}") from None
+
+        return V2State(
+            active=active,
+            contrast=contrast,
+            line1_modes=line1_modes,
+            motion_active=motion_active,
+            motion_timestamp=motion_timestamp,
+            line2_mode=line2_mode,
+            rotate_seconds=rotate_seconds,
+            items=items,
+            override_active=override_active,
+            override_text=override_text,
+            override_expires_at=override_expires_at,
+        )
+
+    def _apply_v2_content(self):
+        """Set the current scrolling message from v2 state.
+        Must be called with _state_lock held.
+        """
+        v2 = self._v2_state
+        if v2 is None:
+            return
+
+        if v2.override_active:
+            text = v2.override_text
+        elif v2.items:
+            idx = v2.current_item_index % len(v2.items)
+            text = v2.items[idx].text
+        else:
+            text = ""
+
+        if len(text) > self.MAX_SCROLL_MESSAGE_LENGTH:
+            text = text[: self.MAX_SCROLL_MESSAGE_LENGTH - 1] + "…"
+
+        self.current_message = text
+        self._cached_msg_width = self.scroll_font.getlength(text) if text else 0
+        self.scroll_position = 0
+        self.scroll_start_time = None
+        self.scroll_paused = False
+        self._last_rendered_scroll_pos = -1
+        self.content_update_needed = True
 
     def set_scrolling_message(self, message):
         """Set the scrolling message for default mode.
@@ -271,6 +509,37 @@ class OLEDManager:
                 self._start_burn_in_refresh()
                 return
 
+            # v2 override expiry check
+            v2 = self._v2_state
+            if (
+                v2
+                and v2.override_active
+                and v2.override_expires_at
+                and datetime.now(UTC) >= v2.override_expires_at
+            ):
+                self.logger.info("v2 override expired, reverting to rotation")
+                self._v2_state.override_active = False
+                if self.current_mode == self.MODE_DEFAULT:
+                    self._apply_v2_content()
+
+            # v2 rotation check
+            if (
+                self._v2_state
+                and not self._v2_state.override_active
+                and self._v2_state.items
+                and len(self._v2_state.items) > 1
+                and self.current_mode == self.MODE_DEFAULT
+            ):
+                elapsed = now - self._v2_state.last_rotation_time
+                if elapsed >= self._v2_state.rotate_seconds:
+                    self._v2_state.current_item_index = (
+                        (self._v2_state.current_item_index + 1) % len(self._v2_state.items)
+                    )
+                    self._v2_state.last_rotation_time = now
+                    item = self._v2_state.items[self._v2_state.current_item_index]
+                    self.logger.debug(f"v2 rotation: now showing '{item.key}' (priority={item.priority})")
+                    self._apply_v2_content()
+
             current_time = datetime.now()
             if self.current_mode == self.MODE_DEFAULT and current_time.minute != self.last_minute:
                 self.status_update_needed = True
@@ -295,6 +564,7 @@ class OLEDManager:
         """Capture a snapshot of all state needed for rendering.
         Must be called with _state_lock held.
         """
+        v2 = self._v2_state
         return {
             "mode": self.current_mode,
             "message": self.current_message,
@@ -305,9 +575,10 @@ class OLEDManager:
             "line2": self.line2,
             "volume_level": self.volume_level,
             "volume_muted": self.volume_muted,
-            "motion_active": self.motion_active,
-            "last_motion_time": self.last_motion_time,
+            "motion_active": v2.motion_active if v2 else self.motion_active,
+            "last_motion_time": v2.motion_timestamp if v2 else self.last_motion_time,
             "status_y_offset": self._status_y_offset,
+            "v2_state": v2,
         }
 
     def _clear_display(self):
@@ -316,7 +587,7 @@ class OLEDManager:
             draw.rectangle((0, 0, self.device.width - 1, self.device.height - 1), outline=0, fill=0)
 
     def _render_status_content_image(self, snap=None):
-        """Render status bar content (clock, divider, motion) without the horizontal separator.
+        """Render status bar content based on v2 line1 modes or legacy layout.
 
         Args:
             snap (dict): Optional state snapshot. If None, reads live state (must hold lock).
@@ -324,19 +595,58 @@ class OLEDManager:
         status_image = Image.new("1", (self.device.width, 10))
         draw = ImageDraw.Draw(status_image)
         y_off = snap["status_y_offset"] if snap else self._status_y_offset
+        v2 = snap["v2_state"] if snap else self._v2_state
+
+        modes = v2.line1_modes if v2 is not None else {"clock", "motion"}
+
+        show_clock = "clock" in modes
+        show_motion = "motion" in modes
+
+        if show_clock and show_motion:
+            # Both: clock on left ~75%, divider, motion on right
+            self._draw_clock_section(draw, y_off, max_x=int(self.device.width * 0.75))
+            sep_x = int(self.device.width * 0.75)
+            draw.line([(sep_x, y_off), (sep_x, 8 + y_off)], fill="white", width=1)
+            self._draw_motion_section(draw, y_off, snap)
+        elif show_clock:
+            # Clock only, full width
+            self._draw_clock_section(draw, y_off, max_x=self.device.width)
+        elif show_motion:
+            # Motion only, full width (left-aligned)
+            motion_text = self._format_motion_time(snap)
+            motion_icon_width = self.icon_font.getlength(self.ICON_WALKING)
+            draw.text((0, y_off), self.ICON_WALKING, font=self.icon_font, fill="white")
+            draw.text((motion_icon_width + 2, y_off), motion_text, font=self.status_font, fill="white")
+
+        return status_image
+
+    def _draw_clock_section(self, draw, y_off, max_x):
+        """Draw the clock section of the status bar.
+
+        Args:
+            draw (ImageDraw): Drawing context.
+            y_off (int): Vertical pixel offset for burn-in jitter.
+            max_x (int): Maximum x coordinate for clock text.
+        """
         current_time = datetime.now().strftime("%a %m/%d %-I:%M%p")
         icon_width = self.icon_font.getlength(self.ICON_CLOCK)
         draw.text((0, y_off), self.ICON_CLOCK, font=self.icon_font, fill="white")
         draw.text((icon_width + 2, y_off), current_time, font=self.status_font, fill="white")
-        sep_x = int(self.device.width * 0.75)
-        draw.line([(sep_x, y_off), (sep_x, 8 + y_off)], fill="white", width=1)
+
+    def _draw_motion_section(self, draw, y_off, snap=None):
+        """Draw the motion section of the status bar (right-aligned).
+
+        Args:
+            draw (ImageDraw): Drawing context.
+            y_off (int): Vertical pixel offset for burn-in jitter.
+            snap (dict): Optional state snapshot.
+        """
         motion_text = self._format_motion_time(snap)
         motion_icon_width = self.icon_font.getlength(self.ICON_WALKING)
         motion_text_width = self.status_font.getlength(motion_text)
         motion_x = self.device.width - (motion_icon_width + 2 + motion_text_width)
         draw.text((motion_x, y_off), self.ICON_WALKING, font=self.icon_font, fill="white")
         draw.text((motion_x + motion_icon_width + 2, y_off), motion_text, font=self.status_font, fill="white")
-        return status_image
 
     def _flush_composition(self):
         """Validate layers and send the current composition to the device."""
@@ -550,12 +860,19 @@ class OLEDManager:
             self.temp_timer = None
 
     def _revert_to_default(self):
-        """Revert to default mode."""
+        """Revert to default mode, restoring v2 state if active."""
         with self._state_lock:
             if self.mode_timer:
                 self.mode_timer.cancel()
                 self.mode_timer = None
         self.set_mode(self.MODE_DEFAULT)
+        with self._state_lock:
+            if self._v2_state is not None:
+                self._apply_v2_content()
+                try:
+                    self.device.contrast(self._v2_state.contrast)
+                except Exception as e:
+                    self.logger.error(f"Failed to restore v2 contrast: {e}")
 
     def _cancel_temp_message(self):
         """Cancel any active temporary message timer."""

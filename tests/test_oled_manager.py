@@ -27,12 +27,12 @@ def mgr(_mock_hardware_modules):
     """Construct an OLEDManager (all hardware is mocked) and patch attributes for pure-logic testing."""
     import sys
 
-    # Configure the mocked ssd1306 to return a device with real int dimensions
+    # Configure the mocked ssd1305 to return a device with real int dimensions
     # so PIL Image.new() calls in __init__ work.
     mock_device = MagicMock()
     mock_device.width = 128
     mock_device.height = 32
-    sys.modules["luma.oled.device"].ssd1306.return_value = mock_device
+    sys.modules["luma.oled.device"].ssd1305.return_value = mock_device
 
     from smartchime.oled_manager import OLEDManager
 
@@ -284,3 +284,320 @@ class TestOLEDManager:
         mgr.cleanup()
         timer.cancel.assert_called_once()
         assert mgr.temp_timer is None
+
+
+# ---------------------------------------------------------------------------
+# v2 contract tests
+# ---------------------------------------------------------------------------
+
+
+def _make_v2_payload(**overrides):
+    """Return a valid v2 payload with optional overrides."""
+    base = {
+        "version": 2,
+        "active": True,
+        "contrast": 0.5,
+        "line1": {
+            "mode": "clock, motion",
+            "motion": {"active": False, "timestamp": "2026-03-10T15:00:00+00:00"},
+        },
+        "line2": {
+            "mode": "rotate",
+            "rotate_seconds": 10,
+            "items": [
+                {"key": "weather", "text": "58° Rain", "priority": 70},
+                {"key": "security", "text": "Front Door Locked", "priority": 90},
+            ],
+        },
+        "override": {"active": False, "text": "", "expires_at": None},
+    }
+    for k, v in overrides.items():
+        if isinstance(v, dict) and isinstance(base.get(k), dict):
+            base[k] = {**base[k], **v}
+        else:
+            base[k] = v
+    return base
+
+
+class TestV2Parsing:
+    def test_valid_payload_accepted(self, mgr):
+        payload = _make_v2_payload()
+        mgr.apply_v2_state(payload)
+        assert mgr._v2_state is not None
+        assert mgr._v2_state.active is True
+        assert mgr._v2_state.contrast == 127  # int(0.5 * 255)
+
+    def test_rejects_wrong_version(self, mgr):
+        payload = _make_v2_payload(version=1)
+        with pytest.raises(ValueError, match="version"):
+            mgr.apply_v2_state(payload)
+
+    def test_rejects_missing_version(self, mgr):
+        payload = _make_v2_payload()
+        del payload["version"]
+        with pytest.raises(ValueError, match="version"):
+            mgr.apply_v2_state(payload)
+
+    def test_rejects_non_dict(self, mgr):
+        with pytest.raises(ValueError, match="Expected dict"):
+            mgr.apply_v2_state("not a dict")
+
+    def test_rejects_missing_required_fields(self, mgr):
+        for field_name in ("active", "contrast", "line1", "line2", "override"):
+            payload = _make_v2_payload()
+            del payload[field_name]
+            with pytest.raises(ValueError, match=f"Missing required field: {field_name}"):
+                mgr.apply_v2_state(payload)
+
+    def test_rejects_contrast_out_of_range(self, mgr):
+        with pytest.raises(ValueError, match="contrast"):
+            mgr.apply_v2_state(_make_v2_payload(contrast=1.5))
+        with pytest.raises(ValueError, match="contrast"):
+            mgr.apply_v2_state(_make_v2_payload(contrast=-0.1))
+
+    def test_contrast_converted_correctly(self, mgr):
+        mgr.apply_v2_state(_make_v2_payload(contrast=0.0))
+        assert mgr._v2_state.contrast == 0
+        mgr.apply_v2_state(_make_v2_payload(contrast=1.0))
+        assert mgr._v2_state.contrast == 255
+
+    def test_device_contrast_called(self, mgr):
+        mgr.apply_v2_state(_make_v2_payload(contrast=0.5))
+        mgr.device.contrast.assert_called_with(127)
+
+    def test_device_show_called_when_active(self, mgr):
+        mgr.apply_v2_state(_make_v2_payload(active=True))
+        mgr.device.show.assert_called()
+
+    def test_device_hide_called_when_inactive(self, mgr):
+        mgr.apply_v2_state(_make_v2_payload(active=False))
+        mgr.device.hide.assert_called()
+
+    def test_naive_timestamps_assume_utc(self, mgr):
+        payload = _make_v2_payload()
+        payload["line1"]["motion"]["timestamp"] = "2026-03-10T15:00:00"
+        payload["override"] = {"active": True, "text": "Test", "expires_at": "2020-01-01T00:00:00"}
+        mgr.apply_v2_state(payload)
+        assert mgr._v2_state.motion_timestamp.tzinfo is not None
+        assert mgr._v2_state.override_expires_at.tzinfo is not None
+
+
+class TestV2Line1Modes:
+    def test_parses_clock_and_motion(self, mgr):
+        mgr.apply_v2_state(_make_v2_payload())
+        assert mgr._v2_state.line1_modes == {"clock", "motion"}
+
+    def test_parses_clock_only(self, mgr):
+        payload = _make_v2_payload()
+        payload["line1"]["mode"] = "clock"
+        mgr.apply_v2_state(payload)
+        assert mgr._v2_state.line1_modes == {"clock"}
+
+    def test_parses_motion_only(self, mgr):
+        payload = _make_v2_payload()
+        payload["line1"]["mode"] = "motion"
+        mgr.apply_v2_state(payload)
+        assert mgr._v2_state.line1_modes == {"motion"}
+
+    def test_rejects_invalid_mode(self, mgr):
+        payload = _make_v2_payload()
+        payload["line1"]["mode"] = "clock, invalid"
+        with pytest.raises(ValueError, match="Invalid line1 modes"):
+            mgr.apply_v2_state(payload)
+
+    def test_rejects_empty_mode(self, mgr):
+        payload = _make_v2_payload()
+        payload["line1"]["mode"] = ""
+        with pytest.raises(ValueError, match="at least one mode"):
+            mgr.apply_v2_state(payload)
+
+    def test_motion_timestamp_parsed(self, mgr):
+        mgr.apply_v2_state(_make_v2_payload())
+        assert mgr._v2_state.motion_timestamp is not None
+        assert mgr._v2_state.motion_timestamp.year == 2026
+
+    def test_motion_active_parsed(self, mgr):
+        payload = _make_v2_payload()
+        payload["line1"]["motion"]["active"] = True
+        mgr.apply_v2_state(payload)
+        assert mgr._v2_state.motion_active is True
+
+
+class TestV2Items:
+    def test_items_sorted_by_priority_desc(self, mgr):
+        mgr.apply_v2_state(_make_v2_payload())
+        # security (90) should be first, weather (70) second
+        assert mgr._v2_state.items[0].key == "security"
+        assert mgr._v2_state.items[1].key == "weather"
+
+    def test_rejects_duplicate_keys(self, mgr):
+        payload = _make_v2_payload()
+        payload["line2"]["items"] = [
+            {"key": "a", "text": "A", "priority": 10},
+            {"key": "a", "text": "B", "priority": 20},
+        ]
+        with pytest.raises(ValueError, match="Duplicate"):
+            mgr.apply_v2_state(payload)
+
+    def test_rejects_item_missing_fields(self, mgr):
+        payload = _make_v2_payload()
+        payload["line2"]["items"] = [{"key": "a", "text": "A"}]  # missing priority
+        with pytest.raises(ValueError, match="missing required field"):
+            mgr.apply_v2_state(payload)
+
+    def test_empty_items_allowed(self, mgr):
+        payload = _make_v2_payload()
+        payload["line2"]["items"] = []
+        mgr.apply_v2_state(payload)
+        assert mgr._v2_state.items == []
+
+    def test_items_change_resets_rotation_index(self, mgr):
+        mgr.apply_v2_state(_make_v2_payload())
+        mgr._v2_state.current_item_index = 1
+        # Apply with different items
+        payload = _make_v2_payload()
+        payload["line2"]["items"] = [{"key": "new", "text": "New Item", "priority": 50}]
+        mgr.apply_v2_state(payload)
+        assert mgr._v2_state.current_item_index == 0
+
+    def test_same_items_preserve_rotation_index(self, mgr):
+        mgr.apply_v2_state(_make_v2_payload())
+        mgr._v2_state.current_item_index = 1
+        # Apply same payload (same keys)
+        mgr.apply_v2_state(_make_v2_payload())
+        assert mgr._v2_state.current_item_index == 1
+
+
+class TestV2Rotation:
+    def test_rotation_advances_after_interval(self, mgr):
+        mgr.apply_v2_state(_make_v2_payload())
+        assert mgr._v2_state.current_item_index == 0
+        # Simulate time passage past rotate_seconds
+        mgr._v2_state.last_rotation_time = time.monotonic() - 11
+        mgr.update_display()
+        assert mgr._v2_state.current_item_index == 1
+
+    def test_rotation_wraps_around(self, mgr):
+        mgr.apply_v2_state(_make_v2_payload())
+        mgr._v2_state.current_item_index = 1  # last item
+        mgr._v2_state.last_rotation_time = time.monotonic() - 11
+        mgr.update_display()
+        assert mgr._v2_state.current_item_index == 0
+
+    def test_no_rotation_with_single_item(self, mgr):
+        payload = _make_v2_payload()
+        payload["line2"]["items"] = [{"key": "only", "text": "Only One", "priority": 50}]
+        mgr.apply_v2_state(payload)
+        mgr._v2_state.last_rotation_time = time.monotonic() - 100
+        mgr.update_display()
+        assert mgr._v2_state.current_item_index == 0
+
+    def test_rotation_sets_current_message(self, mgr):
+        mgr.apply_v2_state(_make_v2_payload())
+        # First item (highest priority) should be "Front Door Locked"
+        assert mgr.current_message == "Front Door Locked"
+
+    def test_rotation_does_not_run_in_overlay_mode(self, mgr):
+        mgr.apply_v2_state(_make_v2_payload())
+        mgr.set_mode(mgr.MODE_CENTERED, line1="Test", line2="Overlay")
+        mgr._v2_state.last_rotation_time = time.monotonic() - 100
+        mgr.update_display()
+        assert mgr._v2_state.current_item_index == 0
+
+
+class TestV2Override:
+    def test_override_shows_override_text(self, mgr):
+        payload = _make_v2_payload()
+        payload["override"] = {"active": True, "text": "Alert!", "expires_at": None}
+        mgr.apply_v2_state(payload)
+        assert mgr.current_message == "Alert!"
+
+    def test_override_suppresses_rotation(self, mgr):
+        payload = _make_v2_payload()
+        payload["override"] = {"active": True, "text": "Alert!", "expires_at": None}
+        mgr.apply_v2_state(payload)
+        mgr._v2_state.last_rotation_time = time.monotonic() - 100
+        mgr.update_display()
+        assert mgr.current_message == "Alert!"
+        assert mgr._v2_state.current_item_index == 0
+
+    def test_override_auto_expires(self, mgr):
+        past = "2020-01-01T00:00:00+00:00"
+        payload = _make_v2_payload()
+        payload["override"] = {"active": True, "text": "Expired Alert", "expires_at": past}
+        mgr.apply_v2_state(payload)
+        # Override is active but expired — update_display should clear it
+        mgr.update_display()
+        assert mgr._v2_state.override_active is False
+        # Should now show the first rotation item
+        assert mgr.current_message == "Front Door Locked"
+
+    def test_override_cleared_by_explicit_message(self, mgr):
+        payload = _make_v2_payload()
+        payload["override"] = {"active": True, "text": "Alert!", "expires_at": None}
+        mgr.apply_v2_state(payload)
+        assert mgr.current_message == "Alert!"
+        # HA sends follow-up with override.active = false
+        payload2 = _make_v2_payload()
+        payload2["override"] = {"active": False, "text": "", "expires_at": None}
+        mgr.apply_v2_state(payload2)
+        assert mgr.current_message == "Front Door Locked"
+
+
+class TestV2OverlayInteraction:
+    def test_volume_overlay_reverts_to_v2_state(self, mgr):
+        mgr.apply_v2_state(_make_v2_payload())
+        assert mgr.current_message == "Front Door Locked"
+        # Enter volume mode
+        mgr.set_volume_display(level=0.5)
+        assert mgr.current_mode == mgr.MODE_VOLUME
+        # Revert
+        mgr._revert_to_default()
+        assert mgr.current_mode == mgr.MODE_DEFAULT
+        assert mgr.current_message == "Front Door Locked"
+
+    def test_centered_overlay_reverts_to_v2_state(self, mgr):
+        mgr.apply_v2_state(_make_v2_payload())
+        mgr.set_mode(mgr.MODE_CENTERED, line1="Select sound:", line2="chime.wav")
+        mgr._revert_to_default()
+        assert mgr.current_mode == mgr.MODE_DEFAULT
+        assert mgr.current_message == "Front Door Locked"
+
+    def test_v2_state_persists_through_overlay(self, mgr):
+        mgr.apply_v2_state(_make_v2_payload())
+        mgr.set_volume_display(level=0.7)
+        # v2 state should still be present
+        assert mgr._v2_state is not None
+        assert mgr._v2_state.items[0].key == "security"
+
+
+class TestV2BackwardCompatibility:
+    def test_v1_message_works_without_v2(self, mgr):
+        """v1 messages should still work when no v2 state has been applied."""
+        mgr.set_scrolling_message("Hello from v1")
+        assert mgr.current_message == "Hello from v1"
+        assert mgr._v2_state is None
+
+    def test_v1_message_works_with_v2_in_overlay(self, mgr):
+        """v1 messages are ignored in non-default modes, same as before."""
+        mgr.apply_v2_state(_make_v2_payload())
+        mgr.set_mode(mgr.MODE_CENTERED, line1="Test")
+        mgr.set_scrolling_message("should be ignored")
+        assert mgr.current_mode == mgr.MODE_CENTERED
+
+
+class TestV2StatusBarRendering:
+    def test_snapshot_includes_v2_motion(self, mgr):
+        payload = _make_v2_payload()
+        payload["line1"]["motion"]["active"] = True
+        mgr.apply_v2_state(payload)
+        snap = mgr._snapshot_render_state()
+        assert snap["motion_active"] is True
+        assert snap["v2_state"] is not None
+
+    def test_snapshot_uses_legacy_motion_without_v2(self, mgr):
+        mgr.motion_active = True
+        mgr.last_motion_time = datetime.now(UTC)
+        snap = mgr._snapshot_render_state()
+        assert snap["motion_active"] is True
+        assert snap["v2_state"] is None
