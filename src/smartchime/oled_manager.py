@@ -8,7 +8,7 @@ import PIL
 from luma.core.image_composition import ComposableImage, ImageComposition
 from luma.core.interface.serial import spi
 from luma.core.render import canvas
-from luma.oled.device import ssd1306
+from luma.oled.device import ssd1305
 from PIL import Image, ImageDraw, ImageFont
 
 
@@ -41,13 +41,15 @@ class OLEDManager:
 
         try:
             serial = spi(port=spi_port, device=spi_device)
-            self.device = ssd1306(serial, width=128, height=32)
+            self.device = ssd1305(serial)
 
-            # We're actually using an ssd1305-based display, so we need to accomodate the differences.
-            # https://github.com/rm-hull/luma.oled/issues/309#issuecomment-2559715206
-            self.device.command(0xDA, 0x12)  # Use alternate COM pin configuration
-            self.device._colstart += 4
-            self.device._colend += 4
+            ### ssd1305 was added in luma.oled 3.15.0 - this was the previous workaround we used
+            ## We're actually using an ssd1305-based display, so we need to accomodate the differences.
+            ## https://github.com/rm-hull/luma.oled/issues/309#issuecomment-2559715206
+            # self.device.command(0xDA, 0x12)  # Use alternate COM pin configuration
+            # self.device._colstart += 4
+            # self.device._colend += 4
+            ### 
 
             self.composition = ImageComposition(self.device)
             status_image = Image.new("1", (self.device.width, 10))
