@@ -19,6 +19,9 @@ class OLEDManager:
     LAYER_CONTENT = "content"
     MODE_DEFAULT = "default"
     MODE_CENTERED = "centered_2line"
+    MODE_VOLUME = "volume"
+    ICON_SPEAKER = "\uf028"
+    ICON_SPEAKER_MUTE = "\uf6a9"
 
     SCROLL_SPEED_PPS = 45
     MAX_SCROLL_MESSAGE_LENGTH = 500
@@ -80,6 +83,8 @@ class OLEDManager:
         self.mode_timer = None
         self.line1 = ""
         self.line2 = ""
+        self.volume_level = 0.0
+        self.volume_muted = False
         self.last_motion_time = None
         self.motion_active = False
         self.scroll_position = 0
@@ -111,7 +116,7 @@ class OLEDManager:
             line2 (str): Second line for centered mode.
             duration (float): Duration before reverting to default mode.
         """
-        if mode not in [self.MODE_DEFAULT, self.MODE_CENTERED]:
+        if mode not in [self.MODE_DEFAULT, self.MODE_CENTERED, self.MODE_VOLUME]:
             raise ValueError(f"Invalid mode: {mode}")
 
         with self._state_lock:
@@ -134,6 +139,34 @@ class OLEDManager:
 
                     self.mode_timer = Timer(duration, self._revert_to_default)
                     self.mode_timer.start()
+
+            self.status_update_needed = True
+            self.content_update_needed = True
+
+    def set_volume_display(self, level, muted=False, duration=None):
+        """Set the display to show a volume bar.
+
+        Args:
+            level (float): Volume level from 0.0 to 1.0.
+            muted (bool): Whether audio is muted.
+            duration (float): Duration before reverting to default mode.
+        """
+        with self._state_lock:
+            self._cancel_temp_message()
+
+            if self.current_mode != self.MODE_VOLUME:
+                self._clear_display()
+
+            self.current_mode = self.MODE_VOLUME
+            self.volume_level = max(0.0, min(1.0, level))
+            self.volume_muted = muted
+
+            if duration:
+                if self.mode_timer:
+                    self.mode_timer.cancel()
+
+                self.mode_timer = Timer(duration, self._revert_to_default)
+                self.mode_timer.start()
 
             self.status_update_needed = True
             self.content_update_needed = True
@@ -268,6 +301,8 @@ class OLEDManager:
             "scroll_paused": self.scroll_paused,
             "line1": self.line1,
             "line2": self.line2,
+            "volume_level": self.volume_level,
+            "volume_muted": self.volume_muted,
             "motion_active": self.motion_active,
             "last_motion_time": self.last_motion_time,
             "status_y_offset": self._status_y_offset,
@@ -310,7 +345,7 @@ class OLEDManager:
             else:
                 self.logger.warning(f"Missing image in layer: {layer}")
                 layer.image = Image.new("1", (self.device.width, layer.height), 0)
-        with canvas(self.device, background=self.composition()) as draw:
+        with canvas(self.device, background=self.composition()) as _draw:
             self.composition.refresh()
 
     def _update_status_bar(self, snap=None):
@@ -336,6 +371,10 @@ class OLEDManager:
                 line1 = snap["line1"] if snap else self.line1
                 line2 = snap["line2"] if snap else self.line2
                 self._draw_centered_text(draw, line1, line2)
+            elif mode == self.MODE_VOLUME:
+                volume_level = snap["volume_level"] if snap else self.volume_level
+                volume_muted = snap["volume_muted"] if snap else self.volume_muted
+                self._draw_volume_bar(draw, volume_level, volume_muted)
             elif mode == self.MODE_DEFAULT and message:
                 msg_width = snap["msg_width"] if snap else self._cached_msg_width
                 scroll_pos = snap["scroll_position"] if snap else self.scroll_position
@@ -361,6 +400,43 @@ class OLEDManager:
             line2 = self._truncate_text(line2, self.device.width, draw)
             x2, y2 = self._center_text(line2, draw, 12, 12)
             draw.text((x2, y2), line2, font=self.text_font, fill="white")
+
+    def _draw_volume_bar(self, draw, level, muted):
+        """Draw a volume bar with speaker icon.
+
+        Args:
+            draw (ImageDraw): Drawing context for the content area (128x22).
+            level (float): Volume level from 0.0 to 1.0.
+            muted (bool): Whether audio is muted.
+        """
+        # Speaker icon on the left, vertically centered
+        icon = self.ICON_SPEAKER_MUTE if muted else self.ICON_SPEAKER
+        icon_x = 2
+        icon_bbox = self.icon_font.getbbox(icon)
+        icon_h = icon_bbox[3] - icon_bbox[1]
+        icon_y = (22 - icon_h) // 2
+        draw.text((icon_x, icon_y), icon, font=self.icon_font, fill="white")
+
+        # Bar track: outline rectangle
+        bar_left = 18
+        bar_right = 124
+        bar_top = 5
+        bar_bottom = 17
+        draw.rectangle([bar_left, bar_top, bar_right, bar_bottom], outline="white", fill="black")
+
+        if muted:
+            # Diagonal strikethrough across the empty bar
+            draw.line([bar_left, bar_bottom, bar_right, bar_top], fill="white", width=1)
+            return
+
+        # Filled portion inside the track
+        inner_left = bar_left + 2
+        inner_right = bar_right - 2
+        inner_top = bar_top + 2
+        inner_bottom = bar_bottom - 2
+        fill_width = int(level * (inner_right - inner_left))
+        if fill_width > 0:
+            draw.rectangle([inner_left, inner_top, inner_left + fill_width, inner_bottom], fill="white")
 
     def _draw_scrolling_text(self, draw, message=None, msg_width=None, scroll_pos=None, paused=None):
         """Draw scrolling text using snapshot values."""

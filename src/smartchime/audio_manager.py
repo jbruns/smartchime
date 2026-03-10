@@ -47,11 +47,13 @@ class AudioManager:
     def _display_volume(self):
         if not self.oled:
             return
-        if self.mixer.getmute()[0] == 1:
-            self.oled.set_mode("centered_2line", "Volume:", "MUTE", duration=5)
+        muted = self.mixer.getmute()[0] == 1
+        if muted:
+            level = 0.0
         else:
-            self.current_volume = self.mixer.getvolume(units=2)[0] / 100
-            self.oled.set_mode("centered_2line", "Volume:", f"{self.current_volume} dB", duration=5)
+            volume_centibels = self.mixer.getvolume(units=2)[0]
+            level = (volume_centibels + 10300) / 10300
+        self.oled.set_volume_display(level=level, muted=muted, duration=3)
 
     def adjust_volume(self, delta):
         if self.mixer.getmute()[0] == 1:

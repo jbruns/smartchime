@@ -109,13 +109,25 @@ class TestDisplayVolume:
     def test_shows_mute_on_oled(self, manager_with_oled, mock_mixer):
         mock_mixer.getmute.return_value = [1]
         manager_with_oled._display_volume()
-        manager_with_oled.oled.set_mode.assert_called_once_with("centered_2line", "Volume:", "MUTE", duration=5)
+        manager_with_oled.oled.set_volume_display.assert_called_once_with(level=0.0, muted=True, duration=3)
 
-    def test_shows_db_value_on_oled(self, manager_with_oled, mock_mixer):
+    def test_shows_volume_bar_on_oled(self, manager_with_oled, mock_mixer):
         mock_mixer.getmute.return_value = [0]
-        mock_mixer.getvolume.return_value = [-2500]
+        mock_mixer.getvolume.return_value = [-5150]  # -51.50 dB → (−5150+10300)/10300 = 0.5
         manager_with_oled._display_volume()
-        manager_with_oled.oled.set_mode.assert_called_once_with("centered_2line", "Volume:", "-25.0 dB", duration=5)
+        manager_with_oled.oled.set_volume_display.assert_called_once_with(level=0.5, muted=False, duration=3)
+
+    def test_full_volume_level(self, manager_with_oled, mock_mixer):
+        mock_mixer.getmute.return_value = [0]
+        mock_mixer.getvolume.return_value = [0]  # 0 dB → level = 1.0
+        manager_with_oled._display_volume()
+        manager_with_oled.oled.set_volume_display.assert_called_once_with(level=1.0, muted=False, duration=3)
+
+    def test_min_volume_level(self, manager_with_oled, mock_mixer):
+        mock_mixer.getmute.return_value = [0]
+        mock_mixer.getvolume.return_value = [-10300]  # -103 dB → level = 0.0
+        manager_with_oled._display_volume()
+        manager_with_oled.oled.set_volume_display.assert_called_once_with(level=0.0, muted=False, duration=3)
 
 
 class TestInit:

@@ -230,6 +230,52 @@ class TestOLEDManager:
         assert x == expected_x
         assert y == expected_y
 
+    # -- set_volume_display ---------------------------------------------------
+
+    def test_set_volume_display_sets_mode(self, mgr):
+        mgr.set_volume_display(level=0.5)
+        assert mgr.current_mode == mgr.MODE_VOLUME
+        assert mgr.volume_level == 0.5
+        assert mgr.volume_muted is False
+        assert mgr.content_update_needed is True
+
+    def test_set_volume_display_muted(self, mgr):
+        mgr.set_volume_display(level=0.0, muted=True)
+        assert mgr.volume_muted is True
+
+    def test_set_volume_display_clamps_level(self, mgr):
+        mgr.set_volume_display(level=1.5)
+        assert mgr.volume_level == 1.0
+        mgr.set_volume_display(level=-0.5)
+        assert mgr.volume_level == 0.0
+
+    @patch("smartchime.oled_manager.Timer")
+    def test_set_volume_display_starts_timer(self, mock_timer_cls, mgr):
+        timer_instance = MagicMock()
+        mock_timer_cls.return_value = timer_instance
+        mgr.set_volume_display(level=0.5, duration=3.0)
+        mock_timer_cls.assert_called_once_with(3.0, mgr._revert_to_default)
+        timer_instance.start.assert_called_once()
+
+    @patch("smartchime.oled_manager.Timer")
+    def test_set_volume_display_resets_timer_on_repeat(self, mock_timer_cls, mgr):
+        first_timer = MagicMock()
+        second_timer = MagicMock()
+        mock_timer_cls.side_effect = [first_timer, second_timer]
+
+        mgr.set_volume_display(level=0.3, duration=3.0)
+        mgr.set_volume_display(level=0.6, duration=3.0)
+
+        first_timer.cancel.assert_called_once()
+        second_timer.start.assert_called_once()
+        assert mgr.volume_level == 0.6
+
+    def test_revert_to_default_from_volume(self, mgr):
+        mgr.set_volume_display(level=0.5)
+        assert mgr.current_mode == mgr.MODE_VOLUME
+        mgr._revert_to_default()
+        assert mgr.current_mode == mgr.MODE_DEFAULT
+
     # -- cleanup --------------------------------------------------------------
 
     def test_cleanup_cancels_timers(self, mgr):
