@@ -45,62 +45,145 @@ When assembled, here's what we get!
 - [Waveshare 2.23" 128x32 OLED](https://www.waveshare.com/wiki/2.23inch_OLED_HAT)
 
 ## Tested on
-- DietPi 9.12
+- DietPi 10.x (Debian Trixie) on Raspberry Pi 4B
 
 ## Software setup
-In `dietpi-config`:
-- Set locale, network, wifi according to your environment.
-- Enable the `vc4-fkms-v3d` driver (FKMS is necessary for vcgencmd to work).
-- Set the HDMI-A-1 display to 1080x1920@60. Rotate 270 degrees.
-- In audio options:
-  - allow ALSA to be installed.
-  - select the `hifiberry-dacplus` sound card.
-- In advanced options:
-  - Enable SPI.
 
-Package installation:
+Most of the setup is automated via two files placed on the SD card before first boot. After DietPi completes its initial configuration, a post-boot script handles hardware setup, software installation, and service creation.
+
+### Automated setup (recommended)
+
+1. **Flash** a [DietPi image](https://dietpi.com/#download) for Raspberry Pi to your SD card.
+
+2. **Copy two files** from this repository to the SD card's boot partition:
+   - `dietpi.txt` — replaces the default DietPi automation config
+   - `Automation_Custom_Script.sh` — runs after DietPi's first-boot setup
+
+   If using WiFi, also edit `dietpi-wifi.txt` on the boot partition with your credentials.
+
+3. **Boot the Pi.** DietPi will run unattended: applying system settings, installing packages (including shairport-sync with AirPlay 2 support), then executing the custom script.
+
+   The custom script handles:
+   - Enabling SPI and the `vc4-fkms-v3d` (FKMS) display driver
+   - Configuring the HDMI output for the Waveshare 5.5" AMOLED (1080×1920@60Hz, rotated 270°)
+   - Enabling RPi video codecs
+   - Adding the `dietpi` user to hardware groups (`video`, `render`, `audio`, `gpio`, `spi`)
+   - Creating udev rules for `vcgencmd` access
+   - Configuring shairport-sync (ALSA mixer → `Digital`, metadata pipe enabled)
+   - Cloning this repository to `/home/dietpi/smartchime`
+   - Creating a Python venv and installing dependencies (`pip install ".[hw]"`)
+   - Copying `config.example.yaml` → `config.yaml`
+   - Creating a `smartchime.service` systemd unit (disabled — you enable it after configuring)
+
+   Script output is logged to `/var/tmp/dietpi/logs/dietpi-automation_custom_script.log`.
+
+4. **Reboot** to apply hardware changes (SPI, display driver, codecs):
+   ```bash
+   sudo reboot
+   ```
+
+5. **Verify the display.** After reboot, the AMOLED should show output at the correct resolution and rotation. If it doesn't, fix it manually:
+   ```bash
+   sudo dietpi-config
+   ```
+   Navigate to *Display Options* → set `vc4-fkms-v3d` driver, 1080×1920@60 resolution, 270° rotation.
+
+6. **Edit `config.yaml`** with your environment-specific settings:
+   ```bash
+   nano /home/dietpi/smartchime/config.yaml
+   ```
+   At minimum, configure:
+   - `mqtt.broker` — your MQTT broker address
+   - `mqtt.username` / `mqtt.password` — if your broker requires authentication
+   - `audio.directory` — path to your WAV sound files
+   - `video.default_stream` — your camera's RTSP/HTTP stream URL
+
+7. **Verify shairport-sync** — the script sets the ALSA mixer control to `Digital` (matching the HifiBerry Amp2). If your setup uses a different mixer control, adjust `/usr/local/etc/shairport-sync.conf`. The original config is backed up as `shairport-sync.conf.bak`.
+
+8. **Enable and start the service:**
+   ```bash
+   sudo systemctl enable --now smartchime.service
+   ```
+
+### Manual setup
+
+If you prefer to set things up by hand (or on a non-DietPi system), here are the individual steps:
+
+<details>
+<summary>Click to expand manual setup instructions</summary>
+
+**System configuration** (via `dietpi-config` or equivalent):
+- Enable the `vc4-fkms-v3d` driver (FKMS is required for `vcgencmd`).
+- Set HDMI output to 1080×1920@60Hz, rotated 270°.
+- Select the `hifiberry-dacplus` sound card.
+- Enable SPI.
+
+**Package installation:**
 ```bash
-# packages
 sudo apt update
 sudo apt install -y \
     python3-pip \
     python3-dev \
-    python3.11-venv \
+    python3.13-venv \
     build-essential \
     gcc \
     libasound2-dev \
+    liblgpio-dev \
     vlc \
-    git 
-# enable systemd-logind (dbus)
+    git
 sudo systemctl unmask systemd-logind
-# grant various hardware access to the dietpi user
 sudo usermod -aG video,render,audio,gpio,spi dietpi
-# install shairport-sync
+```
+
+**Install shairport-sync** (on DietPi):
+```bash
 sudo dietpi-software install 37
 ```
-Shairport-sync configuration:
-- In `/usr/local/etc/shairport-sync.conf`:
-  - Adjust the ALSA mixer name, if required.
-  - Enable metadata
+Then edit `/usr/local/etc/shairport-sync.conf`:
+- Set `mixer_control_name` to `"Digital"` (or your ALSA mixer control)
+- Enable metadata: set `enabled` to `"yes"` in the `metadata` section
+- Verify `pipe_name` is `/tmp/shairport-sync-metadata`
 
-We'll need to restore some `udev` rules in order for `vcgencmd` to function as a non-root user, borrowing from Raspberry Pi OS - create a file called `/etc/udev/rules.d/10-local-rpi.rules`, with this content:
-
+**udev rules** — create `/etc/udev/rules.d/10-local-rpi.rules`:
 ```
 KERNEL=="vchiq", GROUP="video", MODE="0660"
 KERNEL=="vcsm-cma", GROUP="video", MODE="0660"
 KERNEL=="vcio", GROUP="video", MODE="0660"
 ```
 
-At this point, you should be ready to clone the repository.
-`cp config.example.yaml config.yaml`, and then customize `config.yaml` to your liking.
-
-It may be best to create a venv given the various requirements Smartchime has:
-
+**Clone and install:**
 ```bash
+git clone https://github.com/jbruns/smartchime.git /home/dietpi/smartchime
+cd /home/dietpi/smartchime
 python3 -m venv .venv
 source .venv/bin/activate
 pip install ".[hw]"
+cp config.example.yaml config.yaml
 ```
+
+**systemd service** — create `/etc/systemd/system/smartchime.service`:
+```ini
+[Unit]
+Description=Smartchime
+After=network.target
+
+[Service]
+Type=exec
+WorkingDirectory=/home/dietpi/smartchime
+ExecStart=/home/dietpi/smartchime/.venv/bin/python -m smartchime
+Restart=always
+User=dietpi
+Group=dietpi
+
+[Install]
+WantedBy=multi-user.target
+```
+
+Then: `sudo systemctl daemon-reload`
+
+</details>
+
+### Development setup
 
 For local development (linting, testing — no hardware packages):
 
@@ -112,25 +195,6 @@ For development on the Pi (with hardware packages):
 
 ```bash
 pip install -e ".[dev,hw]"
-```
-
-Finally, you may wish to start the Smartchime code on boot. Here's a suggested systemd service (make sure to adjust paths as necessary):
-
-```
-[Unit]
-Description=Smartchime
-After=network.target
-
-[Service]
-type=exec
-WorkingDirectory=/home/dietpi/smartchime
-ExecStart=/home/dietpi/smartchime/.venv/bin/python -m smartchime
-Restart=always
-User=dietpi
-Group=dietpi
-
-[Install]
-WantedBy=multi-user.target
 ```
 
 ## Integrating with Home Assistant
