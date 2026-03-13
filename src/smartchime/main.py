@@ -28,7 +28,6 @@ from smartchime.shairport_metadata import ShairportMetadata  # noqa: E402
 class SmartchimeSystem:
     def __init__(self):
         """Initialize the Smartchime system and its components."""
-        logging.basicConfig(format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.DEBUG)
         self.logger = logging.getLogger(__name__)
         self.logger.info(f"Initializing Smartchime v{__version__}")
 
@@ -41,6 +40,7 @@ class SmartchimeSystem:
             self.logger.error(f"Failed to load configuration: {e}")
             raise
 
+        self._apply_log_level()
         self._migrate_throttle_config()
 
         try:
@@ -105,6 +105,16 @@ class SmartchimeSystem:
             self.logger.error(f"System initialization failed: {e}")
             self.cleanup()
             raise
+
+    def _apply_log_level(self):
+        """Apply the logging level from config to the root logger."""
+        level_name = self.config.get("logging", {}).get("level", "DEBUG").upper()
+        level = getattr(logging, level_name, None)
+        if not isinstance(level, int):
+            self.logger.warning(f"Invalid logging level '{level_name}' in config, defaulting to DEBUG")
+            level = logging.DEBUG
+        logging.getLogger().setLevel(level)
+        self.logger.info(f"Logging level set to {logging.getLevelName(level)}")
 
     def _migrate_throttle_config(self):
         """Detect and convert legacy cycle-count throttle values to seconds.
@@ -432,7 +442,7 @@ def main():
     """Entry point for the Smartchime system."""
     logging.basicConfig(
         format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-        level=logging.DEBUG,
+        level=logging.INFO,
     )
     try:
         system = SmartchimeSystem()

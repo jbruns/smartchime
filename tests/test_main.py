@@ -289,6 +289,39 @@ class TestOnMessage:
 
 
 # ---------------------------------------------------------------------------
+# _apply_log_level
+# ---------------------------------------------------------------------------
+
+
+class TestApplyLogLevel:
+    def test_sets_configured_level(self, system):
+        system.config["logging"] = {"level": "WARNING"}
+        system._apply_log_level()
+        assert logging.getLogger().level == logging.WARNING
+
+    def test_case_insensitive(self, system):
+        system.config["logging"] = {"level": "warning"}
+        system._apply_log_level()
+        assert logging.getLogger().level == logging.WARNING
+
+    def test_defaults_to_debug_when_missing(self, system):
+        system.config.pop("logging", None)
+        system._apply_log_level()
+        assert logging.getLogger().level == logging.DEBUG
+
+    def test_defaults_to_debug_on_invalid_level(self, system):
+        system.config["logging"] = {"level": "BOGUS"}
+        system._apply_log_level()
+        assert logging.getLogger().level == logging.DEBUG
+
+    def test_all_standard_levels(self, system):
+        for level_name in ("DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"):
+            system.config["logging"] = {"level": level_name}
+            system._apply_log_level()
+            assert logging.getLogger().level == getattr(logging, level_name)
+
+
+# ---------------------------------------------------------------------------
 # handle_oled_state
 # ---------------------------------------------------------------------------
 

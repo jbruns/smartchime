@@ -1,5 +1,12 @@
 # Smartchime Configuration
 
+# Logging Configuration
+logging:
+  # Logging level for the application
+  # Valid values: DEBUG, INFO, WARNING, ERROR, CRITICAL
+  # Default: DEBUG
+  level: DEBUG
+
 # MQTT Connection Settings
 mqtt:
   # MQTT broker hostname or IP address
