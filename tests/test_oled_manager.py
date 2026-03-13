@@ -614,6 +614,40 @@ class TestModeSwitchDuringScroll:
         assert mgr.scroll_position == 0
         assert mgr.scroll_paused is False
 
+    def test_mqtt_reapply_preserves_scroll_position(self, mgr):
+        """Repeated MQTT updates with same content must not reset scroll state."""
+        mgr.apply_v2_state(_make_v2_payload())
+        assert mgr.current_message == "Front Door Locked"
+
+        # Simulate scroll advancing
+        mgr.scroll_position = 200
+        mgr.scroll_start_time = time.monotonic() - 4.0
+        mgr._last_rendered_scroll_pos = 200
+        mgr.content_update_needed = False
+
+        # Re-apply same v2 state (simulates periodic MQTT update)
+        mgr.apply_v2_state(_make_v2_payload())
+
+        # Scroll state must be preserved — not reset
+        assert mgr.scroll_position == 200
+        assert mgr.scroll_start_time is not None
+        assert mgr._last_rendered_scroll_pos == 200
+
+    def test_mqtt_reapply_with_changed_text_resets_scroll(self, mgr):
+        """MQTT update with different item text should reset scroll."""
+        mgr.apply_v2_state(_make_v2_payload())
+        mgr.scroll_position = 200
+        mgr._last_rendered_scroll_pos = 200
+
+        # Apply state with different item text (same keys)
+        payload = _make_v2_payload()
+        payload["line2"]["items"][1]["text"] = "Front Door Unlocked"
+        mgr.apply_v2_state(payload)
+
+        # Scroll should be reset because the displayed message changed
+        assert mgr.scroll_position == 0
+        assert mgr.current_message == "Front Door Unlocked"
+
 
 class TestV2StatusBarRendering:
     def test_v2_motion_state_accessible(self, mgr):
