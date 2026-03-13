@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "smartchime"
-version = "2.0.0"
+version = "2.5.0"
 description = "A smart doorbell system for Raspberry Pi 4B"
 readme = "README.md"
 requires-python = ">=3.11"
