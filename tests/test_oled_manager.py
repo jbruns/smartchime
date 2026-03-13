@@ -50,24 +50,31 @@ class TestOLEDManager:
     # -- _format_motion_time --------------------------------------------------
 
     def test_format_motion_time_active(self, mgr):
-        snap = {"motion_active": True, "last_motion_time": None}
-        assert mgr._format_motion_time(snap) == "now"
+        mgr.apply_v2_state(_make_v2_payload())
+        mgr._v2_state.motion_active = True
+        assert mgr._format_motion_time() == "now"
 
     def test_format_motion_time_no_last_time(self, mgr):
-        snap = {"motion_active": False, "last_motion_time": None}
-        assert mgr._format_motion_time(snap) == "--"
+        mgr.apply_v2_state(_make_v2_payload())
+        mgr._v2_state.motion_active = False
+        mgr._v2_state.motion_timestamp = None
+        assert mgr._format_motion_time() == "--"
 
     def test_format_motion_time_minutes(self, mgr):
-        snap = {"motion_active": False, "last_motion_time": datetime.now(UTC) - timedelta(minutes=5)}
-        result = mgr._format_motion_time(snap)
+        mgr.apply_v2_state(_make_v2_payload())
+        mgr._v2_state.motion_active = False
+        mgr._v2_state.motion_timestamp = datetime.now(UTC) - timedelta(minutes=5)
+        result = mgr._format_motion_time()
         assert result == "5m"
 
     def test_format_motion_time_hours(self, mgr):
-        snap = {"motion_active": False, "last_motion_time": datetime.now(UTC) - timedelta(hours=2, minutes=30)}
-        result = mgr._format_motion_time(snap)
+        mgr.apply_v2_state(_make_v2_payload())
+        mgr._v2_state.motion_active = False
+        mgr._v2_state.motion_timestamp = datetime.now(UTC) - timedelta(hours=2, minutes=30)
+        result = mgr._format_motion_time()
         assert result == "2h"
 
-    def test_format_motion_time_defaults_without_snap(self, mgr):
+    def test_format_motion_time_defaults_without_v2(self, mgr):
         assert mgr._format_motion_time() == "--"
 
     # -- set_mode -------------------------------------------------------------
@@ -536,20 +543,89 @@ class TestV2OverlayInteraction:
         assert mgr._v2_state.items[0].key == "security"
 
 
+class TestResetScrollState:
+    def test_reset_clears_all_scroll_fields(self, mgr):
+        mgr.scroll_position = 42
+        mgr.scroll_start_time = 123.0
+        mgr.scroll_paused = True
+        mgr._last_rendered_scroll_pos = 42
+        mgr._reset_scroll_state()
+        assert mgr.scroll_position == 0
+        assert mgr.scroll_start_time is None
+        assert mgr.scroll_paused is False
+        assert mgr._last_rendered_scroll_pos == -1
+
+    def test_set_mode_centered_resets_scroll(self, mgr):
+        """Entering centered mode fully resets scroll state."""
+        mgr.scroll_position = 100
+        mgr.scroll_paused = True
+        mgr._last_rendered_scroll_pos = 100
+        mgr.set_mode(mgr.MODE_CENTERED, line1="Test", line2="Line")
+        assert mgr.scroll_position == 0
+        assert mgr.scroll_paused is False
+        assert mgr._last_rendered_scroll_pos == -1
+
+
+class TestModeSwitchDuringScroll:
+    def test_centered_mode_sets_content_dirty(self, mgr):
+        """Switching to centered always sets content_update_needed, even during scroll."""
+        mgr.apply_v2_state(_make_v2_payload())
+        # Simulate active scrolling
+        mgr.scroll_position = 50
+        mgr._last_rendered_scroll_pos = 50
+        mgr.content_update_needed = False
+        # Switch to centered
+        mgr.set_mode(mgr.MODE_CENTERED, line1="Alert", line2="Test")
+        assert mgr.content_update_needed is True
+        assert mgr.current_mode == mgr.MODE_CENTERED
+
+    def test_rapid_mode_cycling(self, mgr):
+        """Rapid DEFAULT → CENTERED → DEFAULT → CENTERED preserves correct state."""
+        mgr.apply_v2_state(_make_v2_payload())
+        assert mgr.current_mode == mgr.MODE_DEFAULT
+
+        # First cycle
+        mgr.set_mode(mgr.MODE_CENTERED, line1="Sound:", line2="a.wav", duration=5)
+        assert mgr.current_mode == mgr.MODE_CENTERED
+        assert mgr.line1 == "Sound:"
+        mgr._revert_to_default()
+        assert mgr.current_mode == mgr.MODE_DEFAULT
+        assert mgr.current_message == "Front Door Locked"
+
+        # Second cycle
+        mgr.set_mode(mgr.MODE_CENTERED, line1="Sound:", line2="b.wav", duration=5)
+        assert mgr.current_mode == mgr.MODE_CENTERED
+        assert mgr.line2 == "b.wav"
+        assert mgr.content_update_needed is True
+        mgr._revert_to_default()
+        assert mgr.current_mode == mgr.MODE_DEFAULT
+        assert mgr.current_message == "Front Door Locked"
+
+    def test_revert_to_default_is_atomic(self, mgr):
+        """_revert_to_default sets mode and restores v2 content in one lock acquisition."""
+        mgr.apply_v2_state(_make_v2_payload())
+        mgr.set_mode(mgr.MODE_CENTERED, line1="Test", line2="Overlay")
+        mgr._revert_to_default()
+        # After revert, all state should be consistent
+        assert mgr.current_mode == mgr.MODE_DEFAULT
+        assert mgr.current_message == "Front Door Locked"
+        assert mgr.mode_timer is None
+        assert mgr.content_update_needed is True
+        assert mgr.scroll_position == 0
+        assert mgr.scroll_paused is False
+
+
 class TestV2StatusBarRendering:
-    def test_snapshot_includes_v2_motion(self, mgr):
+    def test_v2_motion_state_accessible(self, mgr):
         payload = _make_v2_payload()
         payload["line1"]["motion"]["active"] = True
         mgr.apply_v2_state(payload)
-        snap = mgr._snapshot_render_state()
-        assert snap["motion_active"] is True
-        assert snap["v2_state"] is not None
+        assert mgr._v2_state is not None
+        assert mgr._v2_state.motion_active is True
 
-    def test_snapshot_defaults_without_v2(self, mgr):
-        snap = mgr._snapshot_render_state()
-        assert snap["motion_active"] is False
-        assert snap["last_motion_time"] is None
-        assert snap["v2_state"] is None
+    def test_defaults_without_v2(self, mgr):
+        assert mgr._v2_state is None
+        assert mgr._format_motion_time() == "--"
 
 
 class TestV2Fallback:

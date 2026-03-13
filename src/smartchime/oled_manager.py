@@ -158,16 +158,12 @@ class OLEDManager:
         with self._state_lock:
             self._cancel_temp_message()
 
-            if self.current_mode != mode:
-                self._clear_display()
-
             self.current_mode = mode
 
             if mode == self.MODE_CENTERED:
                 self.line1 = line1
                 self.line2 = line2
-                self.scroll_position = 0
-                self.scroll_start_time = None
+                self._reset_scroll_state()
 
                 if duration:
                     if self.mode_timer:
@@ -189,9 +185,6 @@ class OLEDManager:
         """
         with self._state_lock:
             self._cancel_temp_message()
-
-            if self.current_mode != self.MODE_VOLUME:
-                self._clear_display()
 
             self.current_mode = self.MODE_VOLUME
             self.volume_level = max(0.0, min(1.0, level))
@@ -421,10 +414,7 @@ class OLEDManager:
 
         self.current_message = text
         self._cached_msg_width = self.scroll_font.getlength(text) if text else 0
-        self.scroll_position = 0
-        self.scroll_start_time = None
-        self.scroll_paused = False
-        self._last_rendered_scroll_pos = -1
+        self._reset_scroll_state()
         self.content_update_needed = True
 
     def set_temporary_message(self, message, duration=None):
@@ -450,10 +440,7 @@ class OLEDManager:
             self.temp_message = message
             self.current_message = message
             self._cached_msg_width = self.scroll_font.getlength(message) if message else 0
-            self.scroll_position = 0
-            self.scroll_start_time = None
-            self.scroll_paused = False
-            self._last_rendered_scroll_pos = -1
+            self._reset_scroll_state()
             self.content_update_needed = True
 
             self._cancel_temp_message()
@@ -524,59 +511,32 @@ class OLEDManager:
                 self.status_update_needed = True
                 self.last_minute = current_time.minute
 
-            should_update_status = self.status_update_needed
-            should_update_content = self.content_update_needed
-            mode = self.current_mode
-            has_message = bool(self.current_message)
+            if self.status_update_needed:
+                self._update_status_bar()
+            if self.content_update_needed:
+                self._update_content_area()
+            if self.current_mode == self.MODE_DEFAULT and self.current_message:
+                self._advance_scroll_position()
 
-            # Snapshot state for rendering outside the lock
-            snap = self._snapshot_render_state() if (should_update_status or should_update_content) else None
-
-        if should_update_status:
-            self._update_status_bar(snap)
-        if should_update_content:
-            self._update_content_area(snap)
-        if mode == self.MODE_DEFAULT and has_message:
-            self._update_scroll_state()
-
-    def _snapshot_render_state(self):
-        """Capture a snapshot of all state needed for rendering.
+    def _reset_scroll_state(self):
+        """Reset all scroll-related fields to initial state.
         Must be called with _state_lock held.
         """
-        v2 = self._v2_state
-        return {
-            "mode": self.current_mode,
-            "message": self.current_message,
-            "msg_width": self._cached_msg_width,
-            "scroll_position": self.scroll_position,
-            "scroll_paused": self.scroll_paused,
-            "line1": self.line1,
-            "line2": self.line2,
-            "volume_level": self.volume_level,
-            "volume_muted": self.volume_muted,
-            "motion_active": v2.motion_active if v2 else False,
-            "last_motion_time": v2.motion_timestamp if v2 else None,
-            "status_y_offset": self._status_y_offset,
-            "v2_state": v2,
-        }
+        self.scroll_position = 0
+        self.scroll_start_time = None
+        self.scroll_paused = False
+        self._last_rendered_scroll_pos = -1
 
-    def _clear_display(self):
-        """Clear the OLED display."""
-        with canvas(self.device) as draw:
-            draw.rectangle((0, 0, self.device.width - 1, self.device.height - 1), outline=0, fill=0)
-
-    def _render_status_content_image(self, snap=None):
+    def _render_status_content_image(self):
         """Render status bar content based on v2 line1 modes.
 
         Falls back to clock+motion before the first v2 message is received.
-
-        Args:
-            snap (dict): Optional state snapshot. If None, reads live state (must hold lock).
+        Must be called with _state_lock held.
         """
         status_image = Image.new("1", (self.device.width, 10))
         draw = ImageDraw.Draw(status_image)
-        y_off = snap["status_y_offset"] if snap else self._status_y_offset
-        v2 = snap["v2_state"] if snap else self._v2_state
+        y_off = self._status_y_offset
+        v2 = self._v2_state
 
         modes = v2.line1_modes if v2 is not None else {"clock", "motion"}
 
@@ -588,13 +548,13 @@ class OLEDManager:
             self._draw_clock_section(draw, y_off, max_x=int(self.device.width * 0.75))
             sep_x = int(self.device.width * 0.75)
             draw.line([(sep_x, y_off), (sep_x, 8 + y_off)], fill="white", width=1)
-            self._draw_motion_section(draw, y_off, snap)
+            self._draw_motion_section(draw, y_off)
         elif show_clock:
             # Clock only, full width
             self._draw_clock_section(draw, y_off, max_x=self.device.width)
         elif show_motion:
             # Motion only, full width (left-aligned)
-            motion_text = self._format_motion_time(snap)
+            motion_text = self._format_motion_time()
             motion_icon_width = self.icon_font.getlength(self.ICON_WALKING)
             draw.text((0, y_off), self.ICON_WALKING, font=self.icon_font, fill="white")
             draw.text((motion_icon_width + 2, y_off), motion_text, font=self.status_font, fill="white")
@@ -614,15 +574,14 @@ class OLEDManager:
         draw.text((0, y_off), self.ICON_CLOCK, font=self.icon_font, fill="white")
         draw.text((icon_width + 2, y_off), current_time, font=self.status_font, fill="white")
 
-    def _draw_motion_section(self, draw, y_off, snap=None):
+    def _draw_motion_section(self, draw, y_off):
         """Draw the motion section of the status bar (right-aligned).
 
         Args:
             draw (ImageDraw): Drawing context.
             y_off (int): Vertical pixel offset for burn-in jitter.
-            snap (dict): Optional state snapshot.
         """
-        motion_text = self._format_motion_time(snap)
+        motion_text = self._format_motion_time()
         motion_icon_width = self.icon_font.getlength(self.ICON_WALKING)
         motion_text_width = self.status_font.getlength(motion_text)
         motion_x = self.device.width - (motion_icon_width + 2 + motion_text_width)
@@ -641,10 +600,12 @@ class OLEDManager:
         with canvas(self.device, background=self.composition()) as _draw:
             self.composition.refresh()
 
-    def _update_status_bar(self, snap=None):
-        """Update the status bar section."""
+    def _update_status_bar(self):
+        """Update the status bar section.
+        Must be called with _state_lock held.
+        """
         try:
-            status_image = self._render_status_content_image(snap)
+            status_image = self._render_status_content_image()
             draw = ImageDraw.Draw(status_image)
             draw.line([(0, 9), (self.device.width - 1, 9)], fill="white", width=1)
             self.status_layer.image = status_image
@@ -653,26 +614,21 @@ class OLEDManager:
         except Exception as e:
             self.logger.error(f"Error updating status bar: {e}", exc_info=True)
 
-    def _update_content_area(self, snap=None):
-        """Update the main content area."""
+    def _update_content_area(self):
+        """Update the main content area.
+        Must be called with _state_lock held.
+        """
         try:
             content_image = Image.new("1", (self.device.width, 22))
             draw = ImageDraw.Draw(content_image)
-            mode = snap["mode"] if snap else self.current_mode
-            message = snap["message"] if snap else self.current_message
-            if mode == self.MODE_CENTERED:
-                line1 = snap["line1"] if snap else self.line1
-                line2 = snap["line2"] if snap else self.line2
-                self._draw_centered_text(draw, line1, line2)
-            elif mode == self.MODE_VOLUME:
-                volume_level = snap["volume_level"] if snap else self.volume_level
-                volume_muted = snap["volume_muted"] if snap else self.volume_muted
-                self._draw_volume_bar(draw, volume_level, volume_muted)
-            elif mode == self.MODE_DEFAULT and message:
-                msg_width = snap["msg_width"] if snap else self._cached_msg_width
-                scroll_pos = snap["scroll_position"] if snap else self.scroll_position
-                scroll_paused = snap["scroll_paused"] if snap else self.scroll_paused
-                self._draw_scrolling_text(draw, message, msg_width, scroll_pos, scroll_paused)
+            if self.current_mode == self.MODE_CENTERED:
+                self._draw_centered_text(draw, self.line1, self.line2)
+            elif self.current_mode == self.MODE_VOLUME:
+                self._draw_volume_bar(draw, self.volume_level, self.volume_muted)
+            elif self.current_mode == self.MODE_DEFAULT and self.current_message:
+                self._draw_scrolling_text(
+                    draw, self.current_message, self._cached_msg_width, self.scroll_position, self.scroll_paused
+                )
             self.content_layer.image = content_image
             self._flush_composition()
             self.content_update_needed = False
@@ -755,32 +711,38 @@ class OLEDManager:
     def _update_scroll_state(self):
         """Update scrolling text state using time-based positioning."""
         with self._state_lock:
-            if self.current_mode == self.MODE_CENTERED or not self.current_message:
-                return
-            current_time = time.monotonic()
-            if self.scroll_start_time is None:
+            self._advance_scroll_position()
+
+    def _advance_scroll_position(self):
+        """Advance scroll position based on elapsed time.
+        Must be called with _state_lock held.
+        """
+        if self.current_mode == self.MODE_CENTERED or not self.current_message:
+            return
+        current_time = time.monotonic()
+        if self.scroll_start_time is None:
+            self.scroll_start_time = current_time
+            return
+        msg_width = self._cached_msg_width
+        if msg_width <= self.device.width:
+            return
+        if self.scroll_paused:
+            if current_time - self.scroll_start_time >= 2.0:
+                self.scroll_paused = False
+                self.scroll_position = 0
                 self.scroll_start_time = current_time
-                return
-            msg_width = self._cached_msg_width
-            if msg_width <= self.device.width:
-                return
-            if self.scroll_paused:
-                if current_time - self.scroll_start_time >= 2.0:
-                    self.scroll_paused = False
-                    self.scroll_position = 0
-                    self.scroll_start_time = current_time
-                    self._last_rendered_scroll_pos = -1
-                    self.content_update_needed = True
-            else:
-                elapsed = current_time - self.scroll_start_time
-                new_position = int(elapsed * self.SCROLL_SPEED_PPS)
-                if new_position >= msg_width + self.device.width:
-                    self.scroll_paused = True
-                    self.scroll_start_time = current_time
-                elif new_position != self._last_rendered_scroll_pos:
-                    self.scroll_position = new_position
-                    self._last_rendered_scroll_pos = new_position
-                    self.content_update_needed = True
+                self._last_rendered_scroll_pos = -1
+                self.content_update_needed = True
+        else:
+            elapsed = current_time - self.scroll_start_time
+            new_position = int(elapsed * self.SCROLL_SPEED_PPS)
+            if new_position >= msg_width + self.device.width:
+                self.scroll_paused = True
+                self.scroll_start_time = current_time
+            elif new_position != self._last_rendered_scroll_pos:
+                self.scroll_position = new_position
+                self._last_rendered_scroll_pos = new_position
+                self.content_update_needed = True
 
     def _truncate_text(self, text, max_width, draw):
         """Truncate text to fit width, adding ellipsis if needed.
@@ -812,10 +774,13 @@ class OLEDManager:
         y = y_offset + (height - text_height) // 2
         return x, y
 
-    def _format_motion_time(self, snap=None):
-        """Format time since last motion."""
-        motion_active = snap["motion_active"] if snap else False
-        last_motion_time = snap["last_motion_time"] if snap else None
+    def _format_motion_time(self):
+        """Format time since last motion.
+        Must be called with _state_lock held.
+        """
+        v2 = self._v2_state
+        motion_active = v2.motion_active if v2 else False
+        last_motion_time = v2.motion_timestamp if v2 else None
         if motion_active:
             return "now"
         if last_motion_time is None:
@@ -838,10 +803,7 @@ class OLEDManager:
             elif self.original_message is not None:
                 self.current_message = self.original_message
                 self._cached_msg_width = self.scroll_font.getlength(self.current_message) if self.current_message else 0
-                self.scroll_position = 0
-                self.scroll_start_time = None
-                self.scroll_paused = False
-                self._last_rendered_scroll_pos = -1
+                self._reset_scroll_state()
                 self.content_update_needed = True
             self.temp_message = None
             self.temp_timer = None
@@ -852,14 +814,19 @@ class OLEDManager:
             if self.mode_timer:
                 self.mode_timer.cancel()
                 self.mode_timer = None
-        self.set_mode(self.MODE_DEFAULT)
-        with self._state_lock:
+
+            self._cancel_temp_message()
+            self.current_mode = self.MODE_DEFAULT
+
             if self._v2_state is not None:
                 self._apply_v2_content()
                 try:
                     self.device.contrast(self._v2_state.contrast)
                 except Exception as e:
                     self.logger.error(f"Failed to restore v2 contrast: {e}")
+
+            self.status_update_needed = True
+            self.content_update_needed = True
 
     def _cancel_temp_message(self):
         """Cancel any active temporary message timer."""
