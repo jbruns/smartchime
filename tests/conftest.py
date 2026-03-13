@@ -63,9 +63,9 @@ def sample_config(tmp_path):
             "username": "",
             "password": "",
             "topics": {
-                "doorbell": "smartchime/doorbell/ring",
-                "motion": "smartchime/motion/detected",
-                "oled_state": "smartchime/display/oled",
+                "doorbell": "smartchime/events/doorbell",
+                "motion": "smartchime/events/motion",
+                "oled_state": "smartchime/state/oled",
             },
         },
         "audio": {

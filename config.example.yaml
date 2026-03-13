@@ -20,16 +20,16 @@ mqtt:
   # MQTT topics for system events
   topics:
     # Topic for doorbell ring events
-    # Payload format: {"active": bool, "timestamp": "ISO8601", "video_url": "string"}
-    doorbell: smartchime/doorbell/ring
+    # Payload: see mqtt-schema/event-state-doorbell-contract.schema.json
+    doorbell: smartchime/events/doorbell
 
     # Topic for motion detection events
-    # Payload format: {"active": bool, "timestamp": "ISO8601", "video_url": "string"}
-    motion: smartchime/motion/detected
+    # Payload: see mqtt-schema/event-state-motion-contract.schema.json
+    motion: smartchime/events/motion
 
     # Topic for v2 OLED state contract messages
     # Payload format: see docs/oled-v2-message-contract.schema.json
-    oled_state: smartchime/display/oled
+    oled_state: smartchime/state/oled
 
 # Audio System Configuration
 audio:

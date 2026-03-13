@@ -18,10 +18,10 @@
 #   input_number.smartchime_contrast_morning (0-1 slider, default 0.15)
 #   input_number.smartchime_contrast_day     (0-1 slider, default 0.5)
 #   input_number.smartchime_contrast_evening (0-1 slider, default 0.2)
+#   input_datetime.smartchime_last_motion    (date+time, stores last motion-active timestamp)
 #
 # Replace placeholder entities with your own:
 #   - binary_sensor.front_door_person_occupancy
-#   - sensor.front_door_last_motion
 #   - lock.front_door_lock
 #   - sensor.outdoor_temperature
 #   - sensor.weather_condition
@@ -65,8 +65,9 @@ script:
               "line1": {
                 "mode": "clock, motion",
                 "motion": {
-                  "active": {{ states('binary_sensor.front_door_person_occupancy') == 'on' | tojson }},
-                  "timestamp": "{{ states('sensor.front_door_last_motion') | default(now().isoformat(), true) }}"
+                  "active": {{ (states('binary_sensor.front_door_person_occupancy') == 'on') | tojson }},
+                  {% set last_motion = states('input_datetime.smartchime_last_motion') %}
+                  "timestamp": "{{ last_motion if last_motion not in ['unknown', 'unavailable'] else now().isoformat() }}"
                 }
               },
               "line2": {
@@ -102,7 +103,7 @@ script:
                 ]
               },
               "override": {
-                "active": {{ states('binary_sensor.front_door_doorbell_visitor') == 'on' | tojson }},
+                "active": {{ (states('binary_sensor.front_door_doorbell_visitor') == 'on') | tojson }},
                 "text": "{% if is_state('binary_sensor.front_door_doorbell_visitor', 'on') %}Someone's at the door!{% elif is_state('binary_sensor.front_door_person_occupancy', 'on') %}Person detected!{% endif %}",
                 "expires_at": {% if is_state('binary_sensor.front_door_doorbell_visitor', 'on') %}"{{ (now() + timedelta(minutes=2)).isoformat() }}"{% else %}null{% endif %}
               }
@@ -112,12 +113,22 @@ automation:
   # --- Triggers that republish OLED state ---
 
   - alias: "[Smartchime] OLED State - Motion Change"
-    description: "Republish OLED state when motion sensor changes"
+    description: "Record last-motion timestamp when motion starts, then republish OLED state"
     triggers:
       - entity_id: binary_sensor.front_door_person_occupancy
         trigger: state
     conditions: []
     actions:
+      - if:
+          - condition: state
+            entity_id: binary_sensor.front_door_person_occupancy
+            state: "on"
+        then:
+          - action: input_datetime.set_datetime
+            target:
+              entity_id: input_datetime.smartchime_last_motion
+            data:
+              datetime: "{{ now().strftime('%Y-%m-%d %H:%M:%S') }}"
       - action: script.smartchime_publish_oled_state
     mode: single
 

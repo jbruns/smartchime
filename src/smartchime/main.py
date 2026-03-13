@@ -89,6 +89,7 @@ class SmartchimeSystem:
 
             self.current_sound_index = None
             self.available_sounds = self.audio.get_available_sounds()
+            self._active_event_source = None  # tracks which event type owns AMOLED ("doorbell" or "motion")
             if not self.available_sounds:
                 self.logger.warning("No sound files found in audio directory")
             else:
@@ -265,6 +266,9 @@ class SmartchimeSystem:
     def handle_event_message(self, topic, payload):
         """Handle incoming event messages from MQTT.
 
+        Doorbell events always take priority over motion events for AMOLED display.
+        OLED display changes are managed by the v2 state contract (oled_state topic).
+
         Args:
             topic (str): The MQTT topic of the message.
             payload (dict): The message payload as a dictionary.
@@ -274,25 +278,20 @@ class SmartchimeSystem:
                 self.logger.warning(f"Invalid payload format on {topic}: expected dict, got {type(payload)}")
                 return
 
-            missing_fields = [f for f in ["active", "timestamp", "video_url"] if f not in payload]
+            missing_fields = [f for f in ["active", "timestamp"] if f not in payload]
             if missing_fields:
                 self.logger.warning(f"Missing required fields in {topic} payload: {missing_fields}")
                 return
 
             try:
                 event_time = datetime.fromisoformat(payload["timestamp"])
-
             except (ValueError, TypeError):
                 self.logger.warning(f"Invalid timestamp format in {topic} payload: {payload['timestamp']}")
                 return
 
             self.logger.info(f"Event message: topic={topic}, active={payload['active']}, time={event_time}")
 
-            if topic == self.config["mqtt"]["topics"]["motion"]:
-                if payload["active"]:
-                    self.logger.info("Motion detected — OLED state managed by v2 contract")
-                else:
-                    self.logger.info("Motion cleared — OLED state managed by v2 contract")
+            video_url = payload.get("video_url") or self.config["video"]["default_stream"]
 
             if topic == self.config["mqtt"]["topics"]["doorbell"]:
                 if payload["active"]:
@@ -300,10 +299,24 @@ class SmartchimeSystem:
                         self.available_sounds[self.current_sound_index] or self.config["audio"]["default_sound"]
                     )
                     self.audio.play_sound(sound_file)
-                    video_url = payload["video_url"] or self.config["video"]["default_stream"]
                     self.hdmi.play_video(video_url)
+                    self._active_event_source = "doorbell"
                 else:
-                    self.hdmi.stop_video()
+                    if self._active_event_source == "doorbell":
+                        self.hdmi.stop_video()
+                        self._active_event_source = None
+
+            elif topic == self.config["mqtt"]["topics"]["motion"]:
+                if payload["active"]:
+                    if self._active_event_source != "doorbell":
+                        self.hdmi.play_video(video_url)
+                        self._active_event_source = "motion"
+                    else:
+                        self.logger.info("Motion video suppressed — doorbell has priority")
+                else:
+                    if self._active_event_source == "motion":
+                        self.hdmi.stop_video()
+                        self._active_event_source = None
 
         except Exception as e:
             self.logger.error(f"Error processing {topic} message: {e}")
