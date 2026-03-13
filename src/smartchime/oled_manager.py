@@ -8,7 +8,6 @@ from threading import RLock, Timer
 import PIL
 from luma.core.image_composition import ComposableImage, ImageComposition
 from luma.core.interface.serial import spi
-from luma.core.render import canvas
 from luma.oled.device import ssd1305
 from PIL import Image, ImageDraw, ImageFont
 
@@ -60,6 +59,7 @@ class OLEDManager:
     BURN_IN_BLANK_FRAMES = 4
     FALLBACK_LINE1 = "No OLED state"
     FALLBACK_LINE2 = "Awaiting MQTT..."
+    V2_STATE_FALLBACK_GRACE_SECONDS = 5.0
 
     def __init__(self, spi_port=0, spi_device=0):
         """Initialize the OLED display manager.
@@ -131,6 +131,8 @@ class OLEDManager:
 
         # v2 contract state (None = no state received yet)
         self._v2_state: V2State | None = None
+        self._v2_state_transport_ready = False
+        self._v2_state_wait_started_at: float | None = None
         self._fallback_warning_shown = False
         self._last_rendered_scroll_pos = -1
 
@@ -200,6 +202,51 @@ class OLEDManager:
             self.status_update_needed = True
             self.content_update_needed = True
 
+    def set_v2_state_transport_ready(self, ready):
+        """Track whether MQTT is currently ready to deliver v2 OLED state."""
+        with self._state_lock:
+            if self._v2_state_transport_ready == ready:
+                return
+
+            self._v2_state_transport_ready = ready
+
+            if ready:
+                self._v2_state_wait_started_at = None if self._v2_state is not None else time.monotonic()
+                if self._v2_state_wait_started_at is not None:
+                    self.logger.debug("MQTT ready for v2 OLED state; starting fallback grace period")
+                return
+
+            self._v2_state_wait_started_at = None
+            self._clear_fallback_warning_locked()
+
+    def _should_show_v2_fallback(self, now):
+        """Return True when missing v2 state should be treated as a warning."""
+        return (
+            self._v2_state is None
+            and self.current_mode == self.MODE_DEFAULT
+            and self._v2_state_transport_ready
+            and self._v2_state_wait_started_at is not None
+            and now - self._v2_state_wait_started_at >= self.V2_STATE_FALLBACK_GRACE_SECONDS
+        )
+
+    def _clear_fallback_warning_locked(self):
+        """Clear the missing-v2 fallback warning state.
+
+        Must be called with _state_lock held.
+        """
+        self._fallback_warning_shown = False
+        if (
+            self.current_mode == self.MODE_CENTERED
+            and self.mode_timer is None
+            and self.line1 == self.FALLBACK_LINE1
+            and self.line2 == self.FALLBACK_LINE2
+        ):
+            self.current_mode = self.MODE_DEFAULT
+            self.line1 = ""
+            self.line2 = ""
+            self.status_update_needed = True
+            self.content_update_needed = True
+
     def apply_v2_state(self, payload):
         """Apply a v2 contract state snapshot from MQTT.
 
@@ -235,7 +282,8 @@ class OLEDManager:
                 parsed.last_rotation_time = old_state.last_rotation_time
 
             self._v2_state = parsed
-            self._fallback_warning_shown = False
+            self._v2_state_wait_started_at = None
+            self._clear_fallback_warning_locked()
 
             # Apply device-level controls
             try:
@@ -476,8 +524,8 @@ class OLEDManager:
                 self._start_burn_in_refresh()
                 return
 
-            # Fallback: no v2 state received yet — show warning
-            if self._v2_state is None and self.current_mode == self.MODE_DEFAULT:
+            # Fallback: no v2 state received after MQTT was ready — show warning
+            if self._should_show_v2_fallback(now):
                 if not self._fallback_warning_shown:
                     self.logger.warning("No v2 OLED state received — displaying fallback warning")
                     self._fallback_warning_shown = True
@@ -601,8 +649,10 @@ class OLEDManager:
             else:
                 self.logger.warning(f"Missing image in layer: {layer}")
                 layer.image = Image.new("1", (self.device.width, layer.height), 0)
-        with canvas(self.device, background=self.composition()) as _draw:
-            self.composition.refresh()
+        # Refresh first: luma's canvas copies the background image immediately,
+        # so passing self.composition() before refresh displays the previous frame.
+        self.composition.refresh()
+        self.device.display(self.composition())
 
     def _update_status_bar(self):
         """Update the status bar section.

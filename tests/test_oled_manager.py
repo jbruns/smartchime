@@ -2,9 +2,11 @@
 
 import time
 from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
+from PIL import Image
 
 
 def _make_text_font():
@@ -44,6 +46,51 @@ def mgr(_mock_hardware_modules):
     manager.icon_font = _make_text_font()
     manager.status_font = _make_text_font()
     return manager
+
+
+def _install_fake_composition(mgr):
+    """Replace luma mocks with real image-backed layers for render-path tests."""
+    mgr.status_layer = SimpleNamespace(image=Image.new("1", (mgr.device.width, 10)), height=10, position=(0, 0))
+    mgr.content_layer = SimpleNamespace(image=Image.new("1", (mgr.device.width, 22)), height=22, position=(0, 10))
+    mgr.composition = _TestComposition(mgr.device, [mgr.status_layer, mgr.content_layer])
+
+
+class _TestComposition:
+    """Minimal image composition that mirrors luma's refresh semantics."""
+
+    def __init__(self, device, layers):
+        self.device = device
+        self.composed_images = layers
+        self._background = Image.new("1", (device.width, device.height))
+
+    def __call__(self):
+        return self._background
+
+    def refresh(self):
+        frame = Image.new("1", (self.device.width, self.device.height))
+        for layer in self.composed_images:
+            frame.paste(layer.image, layer.position)
+        self._background = frame
+
+
+class _CopyingCanvas:
+    """Test double for luma.canvas that copies the background up front."""
+
+    def __init__(self, device, background=None, dither=False):
+        del dither
+        self.device = device
+        if background is None:
+            self.image = Image.new("1", (device.width, device.height))
+        else:
+            self.image = background.copy()
+
+    def __enter__(self):
+        return MagicMock()
+
+    def __exit__(self, exc_type, exc, tb):
+        if exc_type is None:
+            self.device.display(self.image)
+        return False
 
 
 class TestOLEDManager:
@@ -256,6 +303,19 @@ class TestOLEDManager:
         mgr.cleanup()
         timer.cancel.assert_called_once()
         assert mgr.temp_timer is None
+
+
+class TestCompositionFlush:
+    def test_flush_displays_refreshed_composition(self, mgr):
+        _install_fake_composition(mgr)
+        mgr.device.display = MagicMock()
+        mgr.content_layer.image.putpixel((0, 0), 1)
+
+        with patch("smartchime.oled_manager.canvas", _CopyingCanvas, create=True):
+            mgr._flush_composition()
+
+        displayed = mgr.device.display.call_args.args[0]
+        assert displayed.getpixel((0, 10)) != 0
 
 
 # ---------------------------------------------------------------------------
@@ -476,6 +536,40 @@ class TestV2Rotation:
         mgr.update_display()
         assert mgr._v2_state.current_item_index == 0
 
+    def test_rotation_updates_display_without_one_frame_lag(self, mgr):
+        _install_fake_composition(mgr)
+        mgr.device.display = MagicMock()
+
+        def fake_update_status_bar():
+            mgr.status_update_needed = False
+
+        def fake_draw_scrolling_text(draw, message=None, msg_width=None, scroll_pos=None, paused=None):
+            del msg_width, scroll_pos, paused
+            marker_x = 0 if message == "Front Door Locked" else 1
+            draw.point((marker_x, 0), fill="white")
+
+        payload = _make_v2_payload()
+        payload["line2"]["items"] = [
+            {"key": "weather", "text": "37 Rainy", "priority": 70},
+            {"key": "security", "text": "Front Door Locked", "priority": 90},
+        ]
+        mgr.apply_v2_state(payload)
+
+        with (
+            patch("smartchime.oled_manager.canvas", _CopyingCanvas, create=True),
+            patch.object(mgr, "_update_status_bar", side_effect=fake_update_status_bar),
+            patch.object(mgr, "_draw_scrolling_text", side_effect=fake_draw_scrolling_text),
+        ):
+            # Seed the composition with the initial long scrolling item.
+            mgr.update_display()
+
+            mgr._v2_state.last_rotation_time = time.monotonic() - 11
+            mgr.update_display()
+
+        displayed = mgr.device.display.call_args.args[0]
+        assert displayed.getpixel((1, 10)) != 0
+        assert displayed.getpixel((0, 10)) == 0
+
 
 class TestV2Override:
     def test_override_shows_override_text(self, mgr):
@@ -663,9 +757,28 @@ class TestV2StatusBarRendering:
 
 
 class TestV2Fallback:
-    def test_fallback_shown_when_no_v2_state(self, mgr):
-        """Before any v2 message arrives, update_display shows a fallback warning."""
+    def test_fallback_not_shown_before_mqtt_ready(self, mgr):
+        """Startup should stay neutral until MQTT is actually ready for v2 state."""
         assert mgr._v2_state is None
+        with patch.object(mgr.logger, "warning") as mock_warning:
+            mgr.update_display()
+        assert mgr._fallback_warning_shown is False
+        assert mgr.current_mode == mgr.MODE_DEFAULT
+        mock_warning.assert_not_called()
+
+    def test_fallback_waits_for_grace_period_after_mqtt_ready(self, mgr):
+        """Connecting MQTT should start a grace window, not trigger an immediate warning."""
+        mgr.set_v2_state_transport_ready(True)
+        with patch.object(mgr.logger, "warning") as mock_warning:
+            mgr.update_display()
+        assert mgr._fallback_warning_shown is False
+        assert mgr.current_mode == mgr.MODE_DEFAULT
+        mock_warning.assert_not_called()
+
+    def test_fallback_shown_after_mqtt_ready_grace_period(self, mgr):
+        """A real warning is shown once MQTT has been ready long enough with no v2 state."""
+        mgr.set_v2_state_transport_ready(True)
+        mgr._v2_state_wait_started_at = time.monotonic() - mgr.V2_STATE_FALLBACK_GRACE_SECONDS - 0.1
         mgr.update_display()
         assert mgr._fallback_warning_shown is True
         assert mgr.current_mode == mgr.MODE_CENTERED
@@ -674,20 +787,39 @@ class TestV2Fallback:
 
     def test_fallback_warning_logged_once(self, mgr):
         """The fallback warning log only fires on the first cycle."""
-        mgr.update_display()
+        mgr.set_v2_state_transport_ready(True)
+        mgr._v2_state_wait_started_at = time.monotonic() - mgr.V2_STATE_FALLBACK_GRACE_SECONDS - 0.1
+        with patch.object(mgr.logger, "warning") as mock_warning:
+            mgr.update_display()
+            # Second call should not re-log (flag already set)
+            mgr.update_display()
         assert mgr._fallback_warning_shown is True
-        # Second call should not re-log (flag already set)
-        mgr.update_display()
-        assert mgr._fallback_warning_shown is True
+        mock_warning.assert_called_once_with("No v2 OLED state received — displaying fallback warning")
 
     def test_fallback_cleared_on_valid_v2(self, mgr):
         """A valid v2 message clears the fallback and switches to v2 content."""
+        mgr.set_v2_state_transport_ready(True)
+        mgr._v2_state_wait_started_at = time.monotonic() - mgr.V2_STATE_FALLBACK_GRACE_SECONDS - 0.1
         mgr.update_display()
         assert mgr._fallback_warning_shown is True
         mgr.apply_v2_state(_make_v2_payload())
         assert mgr._fallback_warning_shown is False
         assert mgr._v2_state is not None
         assert mgr.current_mode == mgr.MODE_DEFAULT
+
+    def test_transport_not_ready_clears_visible_fallback(self, mgr):
+        """Dropping MQTT readiness removes the startup fallback until transport is ready again."""
+        mgr.set_v2_state_transport_ready(True)
+        mgr._v2_state_wait_started_at = time.monotonic() - mgr.V2_STATE_FALLBACK_GRACE_SECONDS - 0.1
+        mgr.update_display()
+        assert mgr._fallback_warning_shown is True
+
+        mgr.set_v2_state_transport_ready(False)
+
+        assert mgr._fallback_warning_shown is False
+        assert mgr.current_mode == mgr.MODE_DEFAULT
+        assert mgr.line1 == ""
+        assert mgr.line2 == ""
 
     def test_invalid_payload_shows_error_on_oled(self, mgr):
         """An invalid v2 payload shows an error message on the OLED."""
@@ -699,6 +831,8 @@ class TestV2Fallback:
 
     def test_invalid_payload_does_not_clear_fallback(self, mgr):
         """An invalid payload doesn't mark v2 as received."""
+        mgr.set_v2_state_transport_ready(True)
+        mgr._v2_state_wait_started_at = time.monotonic() - mgr.V2_STATE_FALLBACK_GRACE_SECONDS - 0.1
         mgr.update_display()
         assert mgr._fallback_warning_shown is True
         with pytest.raises(ValueError):

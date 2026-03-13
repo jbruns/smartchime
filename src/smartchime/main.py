@@ -244,8 +244,10 @@ class SmartchimeSystem:
                 (self.config["mqtt"]["topics"]["oled_state"], 0),
             ]
             client.subscribe(topics)
+            self.oled.set_v2_state_transport_ready(True)
             self.logger.info(f"Subscribed to topics: {[t[0] for t in topics]}")
         else:
+            self.oled.set_v2_state_transport_ready(False)
             self.logger.error(f"Failed to connect to MQTT broker: {reason_code}")
 
     def on_disconnect(self, client, userdata, flags, reason_code, properties):
@@ -258,6 +260,7 @@ class SmartchimeSystem:
             reason_code: Disconnection result reason code.
             properties: MQTT v5.0 properties.
         """
+        self.oled.set_v2_state_transport_ready(False)
         if reason_code != 0:
             self.logger.error(f"Unexpected MQTT disconnection: {reason_code}")
         else:

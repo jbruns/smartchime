@@ -204,6 +204,7 @@ class TestOnConnect:
         client = MagicMock()
         system.on_connect(client, None, MagicMock(), 0, None)
         client.subscribe.assert_called_once()
+        system.oled.set_v2_state_transport_ready.assert_called_once_with(True)
         subscribed = client.subscribe.call_args[0][0]
         topics = {t[0] for t in subscribed}
         assert topics == {
@@ -216,6 +217,19 @@ class TestOnConnect:
         client = MagicMock()
         system.on_connect(client, None, MagicMock(), 1, None)
         client.subscribe.assert_not_called()
+        system.oled.set_v2_state_transport_ready.assert_called_once_with(False)
+
+
+# ---------------------------------------------------------------------------
+# on_disconnect
+# ---------------------------------------------------------------------------
+
+
+class TestOnDisconnect:
+    def test_marks_oled_transport_not_ready(self, system):
+        client = MagicMock()
+        system.on_disconnect(client, None, MagicMock(), 1, None)
+        system.oled.set_v2_state_transport_ready.assert_called_once_with(False)
 
 
 # ---------------------------------------------------------------------------
