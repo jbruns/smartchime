@@ -412,10 +412,14 @@ class OLEDManager:
         if len(text) > self.MAX_SCROLL_MESSAGE_LENGTH:
             text = text[: self.MAX_SCROLL_MESSAGE_LENGTH - 1] + "…"
 
-        self.current_message = text
-        self._cached_msg_width = self.scroll_font.getlength(text) if text else 0
-        self._reset_scroll_state()
-        self.content_update_needed = True
+        # Only reset scroll state when the message actually changes.
+        # MQTT updates may re-apply the same v2 state frequently;
+        # resetting scroll on every call causes visible scroll freezes.
+        if text != self.current_message:
+            self.current_message = text
+            self._cached_msg_width = self.scroll_font.getlength(text) if text else 0
+            self._reset_scroll_state()
+            self.content_update_needed = True
 
     def set_temporary_message(self, message, duration=None):
         """Set a temporary scrolling message with auto-revert.
