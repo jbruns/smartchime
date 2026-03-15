@@ -1,6 +1,6 @@
 """Shared fixtures for Smartchime tests.
 
-Hardware dependencies (luma, gpiozero, alsaaudio, vcgencmd, vlc, rpi-lgpio)
+Hardware dependencies (luma, gpiozero, alsaaudio, rpi-lgpio)
 are mocked at import time so tests can run on any platform.
 """
 
@@ -24,8 +24,6 @@ _HARDWARE_MODULES = [
     "luma.core.image_composition",
     "luma.oled",
     "luma.oled.device",
-    "vcgencmd",
-    "vlc",
     "lgpio",
 ]
 
@@ -64,7 +62,6 @@ def sample_config(tmp_path):
             "password": "",
             "topics": {
                 "doorbell": "smartchime/events/doorbell",
-                "motion": "smartchime/events/motion",
                 "oled_state": "smartchime/state/oled",
             },
         },
@@ -75,9 +72,6 @@ def sample_config(tmp_path):
                 "device": "default",
                 "control": "Digital",
             },
-        },
-        "video": {
-            "default_stream": "http://example.com/stream",
         },
         "displays": {
             "oled": {

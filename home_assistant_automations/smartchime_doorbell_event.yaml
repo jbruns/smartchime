@@ -1,0 +1,61 @@
+# Smartchime Doorbell Event Automations
+#
+# Publishes doorbell events to MQTT for Smartchime to handle (chime playback).
+#
+# OLED display updates are handled separately by the v2 OLED state contract
+# (see oled_state.yaml) which already triggers on the same entities.
+#
+# Replace placeholder entities with your own:
+#   - binary_sensor.front_door_doorbell_visitor  (doorbell ring)
+
+script:
+  smartchime_publish_doorbell_event:
+    alias: "[Smartchime] Publish Doorbell Event"
+    description: >-
+      Publish a doorbell event to MQTT. Called by automations when
+      the doorbell rings or clears.
+    mode: queued
+    max: 5
+    fields:
+      active:
+        description: "Whether the doorbell is currently ringing"
+        required: true
+        selector:
+          boolean:
+    sequence:
+      - action: mqtt.publish
+        data:
+          topic: smartchime/events/doorbell
+          qos: "1"
+          payload: >-
+            {
+              "active": {{ active | tojson }},
+              "timestamp": "{{ now().isoformat() }}"
+            }
+
+automation:
+  - alias: "[Smartchime] Doorbell Ring Detected"
+    description: "Publish doorbell active event when doorbell rings"
+    triggers:
+      - entity_id: binary_sensor.front_door_doorbell_visitor
+        to: "on"
+        trigger: state
+    conditions: []
+    actions:
+      - action: script.smartchime_publish_doorbell_event
+        data:
+          active: true
+    mode: single
+
+  - alias: "[Smartchime] Doorbell Ring Cleared"
+    description: "Publish doorbell inactive event when doorbell clears"
+    triggers:
+      - entity_id: binary_sensor.front_door_doorbell_visitor
+        to: "off"
+        trigger: state
+    conditions: []
+    actions:
+      - action: script.smartchime_publish_doorbell_event
+        data:
+          active: false
+    mode: single

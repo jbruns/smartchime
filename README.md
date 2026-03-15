@@ -14,9 +14,9 @@ why, yes, yes indeed! Why, you ask? Well, two problems presented themselves at o
 
 **It's a doorbell:** feed it any sound file, and it'll happily play when someone's at the door. 
 
-**Camera feed:** Video clips or RTSP streams are played via a 1080p AMOLED display, either on demand (via encoder button), or on doorbell/motion event.
+**Camera feed:** A 1080p AMOLED display runs in Chromium kiosk mode, managed by DietPi's X11 autostart — no Python-side display management needed.
 
-**Event-based triggers:** support is written in for motion, doorbell press, and rotary encoders/switches providing various functions. Event delivery is expected via an MQTT broker, so the chime integrates very well with Home Assistant.
+**Event-based triggers:** support is written in for doorbell press and rotary encoders/switches providing various functions. Event delivery is expected via an MQTT broker, so the chime integrates very well with Home Assistant.
 
 **Customizeable messages:** A small OLED display is always on and able to display various widgets, including a scrolling message string delivered via MQTT. This way, any data available to Home Assistant (temperatures, sensors, calendar events, holidays, birthdays, mail delivery, you name it!) is something that can be displayed.
 
@@ -64,11 +64,10 @@ Most of the setup is automated via two files placed on the SD card before first 
 3. **Boot the Pi.** DietPi will run unattended: applying system settings, installing packages (including shairport-sync with AirPlay 2 support), then executing the custom script.
 
    The custom script handles:
-   - Enabling SPI and the `vc4-fkms-v3d` (FKMS) display driver
+   - Enabling SPI and the `vc4-kms-v3d` (KMS) display driver
    - Configuring the HDMI output for the Waveshare 5.5" AMOLED (1080×1920@60Hz, rotated 270°)
-   - Enabling RPi video codecs
+   - Configuring X11 display and touch rotation for the Waveshare AMOLED
    - Adding the `dietpi` user to hardware groups (`video`, `render`, `audio`, `gpio`, `spi`)
-   - Creating udev rules for `vcgencmd` access
    - Configuring shairport-sync (ALSA mixer → `Digital`, metadata pipe enabled)
    - Cloning this repository to `/home/dietpi/smartchime`
    - Creating a Python venv and installing dependencies (`pip install ".[hw]"`)
@@ -77,16 +76,16 @@ Most of the setup is automated via two files placed on the SD card before first 
 
    Script output is logged to `/var/tmp/dietpi/logs/dietpi-automation_custom_script.log`.
 
-4. **Reboot** to apply hardware changes (SPI, display driver, codecs):
+4. **Reboot** to apply hardware changes (SPI, display driver):
    ```bash
    sudo reboot
    ```
 
-5. **Verify the display.** After reboot, the AMOLED should show output at the correct resolution and rotation. If it doesn't, fix it manually:
+5. **Verify the display.** After reboot, Chromium should launch automatically in kiosk mode on the AMOLED at the correct resolution and rotation. If the display settings need adjustment:
    ```bash
    sudo dietpi-config
    ```
-   Navigate to *Display Options* → set `vc4-fkms-v3d` driver, 1080×1920@60 resolution, 270° rotation.
+   Navigate to *Display Options* → set `vc4-kms-v3d` driver, 1080×1920@60 resolution, 270° rotation.
 
 6. **Edit `config.yaml`** with your environment-specific settings:
    ```bash
@@ -96,7 +95,6 @@ Most of the setup is automated via two files placed on the SD card before first 
    - `mqtt.broker` — your MQTT broker address
    - `mqtt.username` / `mqtt.password` — if your broker requires authentication
    - `audio.directory` — path to your WAV sound files
-   - `video.default_stream` — your camera's RTSP/HTTP stream URL
 
 7. **Verify shairport-sync** — the script sets the ALSA mixer control to `Digital` (matching the HifiBerry Amp2). If your setup uses a different mixer control, adjust `/usr/local/etc/shairport-sync.conf`. The original config is backed up as `shairport-sync.conf.bak`.
 
@@ -113,7 +111,7 @@ If you prefer to set things up by hand (or on a non-DietPi system), here are the
 <summary>Click to expand manual setup instructions</summary>
 
 **System configuration** (via `dietpi-config` or equivalent):
-- Enable the `vc4-fkms-v3d` driver (FKMS is required for `vcgencmd`).
+- Enable the `vc4-kms-v3d` driver.
 - Set HDMI output to 1080×1920@60Hz, rotated 270°.
 - Select the `hifiberry-dacplus` sound card.
 - Enable SPI.
@@ -129,9 +127,7 @@ sudo apt install -y \
     gcc \
     libasound2-dev \
     liblgpio-dev \
-    vlc \
     git
-sudo systemctl unmask systemd-logind
 sudo usermod -aG video,render,audio,gpio,spi dietpi
 ```
 
@@ -201,23 +197,21 @@ pip install -e ".[dev,hw]"
 
 See the `examples/` directory for starter automations, which will publish the right MQTT events for Smartchime to react to.
 
-Note that you can (and probably should) control how long motion or doorbell events are treated as 'active' in Home Assistant, based on your specific needs. This means that, for example, if you only want the doorbell to be "rung" a maximum of every 10 seconds, instruct Home Assistant to wait until your doorbell sensor is out of the "ring" state for 10 seconds before setting Smartchime's doorbell event to 'false'.
+Note that you can (and probably should) control how long doorbell events are treated as 'active' in Home Assistant, based on your specific needs. This means that, for example, if you only want the doorbell to be "rung" a maximum of every 10 seconds, instruct Home Assistant to wait until your doorbell sensor is out of the "ring" state for 10 seconds before setting Smartchime's doorbell event to 'false'.
 
-For the motion and doorbell events, a JSON payload is expected:
+For the doorbell event, a JSON payload is expected:
 
 ```json
 {
   "active": false,
-  "timestamp": "{{ now().isoformat() }}",
-  "video_url": "rtsp://camera/stream?user=abc&resolution=xyz"
+  "timestamp": "{{ now().isoformat() }}"
 }
 ```
 
 | Parameter | Type | Purpose |
 |-----------|------|---------|
-| active    | bool | Whether the motion or doorbell event should be treated as 'active'. |
+| active    | bool | Whether the doorbell event should be treated as 'active'. |
 | timestamp | timedate | Generally, should be the template value `{{ now().isoformat() }}`, meaning the current time in ISO format. |
-| video_url | url | pointer to a relevant video clip, if one is available. If not specified, the default url specified in `config.yaml` will be used. |
 
 For the OLED message, either a raw non-JSON payload can be sent, or if you prefer:
 
@@ -233,5 +227,4 @@ For the OLED message, either a raw non-JSON payload can be sent, or if you prefe
   - https://dietpi.com/docs/software/media/#shairport-sync
 - https://github.com/DanielHartUK/Dot-Matrix-Typeface
 - luma.oled for OLED display drivers
-- RPi.GPIO for hardware interface
 - All other open source contributors

@@ -5,7 +5,7 @@ logging:
   # Logging level for the application
   # Valid values: DEBUG, INFO, WARNING, ERROR, CRITICAL
   # Default: DEBUG
-  level: DEBUG
+  level: INFO
 
 # MQTT Connection Settings
 mqtt:
@@ -30,19 +30,15 @@ mqtt:
     # Payload: see mqtt-schema/event-state-doorbell-contract.schema.json
     doorbell: smartchime/events/doorbell
 
-    # Topic for motion detection events
-    # Payload: see mqtt-schema/event-state-motion-contract.schema.json
-    motion: smartchime/events/motion
-
     # Topic for v2 OLED state contract messages
     # Payload format: see docs/oled-v2-message-contract.schema.json
-    oled_state: smartchime/state/oled
+    oled_state: smartchime/display/oled
 
 # Audio System Configuration
 audio:
   # Directory containing WAV sound files for doorbell
   # Must be absolute path with read permissions
-  directory: /path/to/audio/files
+  directory: /home/dietpi/doorbell_sounds
 
   # Default sound file to play on doorbell events
   # Must be a .wav file present in the audio directory
@@ -59,12 +55,6 @@ audio:
     # Default: PCM
     # Common alternatives: Master, Speaker, Headphone
     control: Digital
-
-# Video Stream Configuration
-video:
-  # Default video stream URL for doorbell camera
-  # Supports rtsp://, http://, or local device paths
-  default_stream: http://your-camera-stream-url
 
 # Display Device Configuration
 displays:
@@ -96,7 +86,7 @@ gpio:
   # max_steps limits gpiozero's internal step counter range.
   # 0 = unbounded (default). A small value like 2 can reduce
   # "ghost" inputs from contact bounce after the user stops turning.
-  max_steps: 0
+  max_steps: 2
     
 # Control Input Throttling Configuration
 controls:

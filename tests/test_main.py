@@ -19,7 +19,6 @@ def system(sample_config):
     sys_obj.config = sample_config
     sys_obj.oled = MagicMock()
     sys_obj.audio = MagicMock()
-    sys_obj.hdmi = MagicMock()
     sys_obj.encoders = MagicMock()
     sys_obj.shairport = MagicMock()
     sys_obj.mqtt_client = MagicMock()
@@ -27,7 +26,6 @@ def system(sample_config):
     sys_obj._throttle_lock = Lock()
     sys_obj.available_sounds = ["doorbell.wav", "chime.wav"]
     sys_obj.current_sound_index = 0
-    sys_obj._active_event_source = None
     return sys_obj
 
 
@@ -71,7 +69,6 @@ class TestHandleEventMessage:
     VALID_PAYLOAD = {
         "active": True,
         "timestamp": "2025-01-01T12:00:00",
-        "video_url": "http://example.com/clip.mp4",
     }
 
     def test_rejects_non_dict_payload(self, system):
@@ -82,93 +79,46 @@ class TestHandleEventMessage:
         system.handle_event_message("smartchime/events/doorbell", {"timestamp": "2025-01-01T12:00:00"})
         system.audio.play_sound.assert_not_called()
 
-    def test_accepts_payload_without_video_url(self, system):
-        payload = {"active": True, "timestamp": "2025-01-01T12:00:00"}
-        system.handle_event_message("smartchime/events/doorbell", payload)
-        system.audio.play_sound.assert_called_once()
-
     def test_rejects_invalid_timestamp(self, system):
         payload = {**self.VALID_PAYLOAD, "timestamp": "not-a-date"}
         system.handle_event_message("smartchime/events/doorbell", payload)
         system.audio.play_sound.assert_not_called()
 
-    # --- Doorbell events ---
-
-    def test_doorbell_active_plays_sound_and_video(self, system):
+    def test_doorbell_active_plays_sound(self, system):
         payload = {**self.VALID_PAYLOAD, "active": True}
         system.handle_event_message("smartchime/events/doorbell", payload)
         system.audio.play_sound.assert_called_once_with("doorbell.wav")
-        system.hdmi.play_video.assert_called_once_with("http://example.com/clip.mp4")
-        assert system._active_event_source == "doorbell"
 
-    def test_doorbell_active_without_video_url_uses_default(self, system):
-        payload = {"active": True, "timestamp": "2025-01-01T12:00:00"}
-        system.handle_event_message("smartchime/events/doorbell", payload)
-        system.hdmi.play_video.assert_called_once_with("http://example.com/stream")
-
-    def test_doorbell_inactive_stops_video(self, system):
-        system._active_event_source = "doorbell"
+    def test_doorbell_inactive_does_not_play_sound(self, system):
         payload = {**self.VALID_PAYLOAD, "active": False}
         system.handle_event_message("smartchime/events/doorbell", payload)
-        system.hdmi.stop_video.assert_called_once()
-        assert system._active_event_source is None
+        system.audio.play_sound.assert_not_called()
 
-    def test_doorbell_inactive_noop_when_not_source(self, system):
-        system._active_event_source = "motion"
-        payload = {**self.VALID_PAYLOAD, "active": False}
-        system.handle_event_message("smartchime/events/doorbell", payload)
-        system.hdmi.stop_video.assert_not_called()
-        assert system._active_event_source == "motion"
 
-    # --- Motion events ---
+# ---------------------------------------------------------------------------
+# play_selected_sound
+# ---------------------------------------------------------------------------
 
-    def test_motion_active_plays_video(self, system):
-        payload = {**self.VALID_PAYLOAD, "active": True}
-        system.handle_event_message("smartchime/events/motion", payload)
-        system.hdmi.play_video.assert_called_once_with("http://example.com/clip.mp4")
-        assert system._active_event_source == "motion"
 
-    def test_motion_active_without_video_url_uses_default(self, system):
-        payload = {"active": True, "timestamp": "2025-01-01T12:00:00"}
-        system.handle_event_message("smartchime/events/motion", payload)
-        system.hdmi.play_video.assert_called_once_with("http://example.com/stream")
+class TestPlaySelectedSound:
+    def test_plays_current_sound(self, system):
+        system.play_selected_sound()
+        system.audio.play_sound.assert_called_once_with("doorbell.wav")
 
-    def test_motion_active_suppressed_by_doorbell(self, system):
-        system._active_event_source = "doorbell"
-        payload = {**self.VALID_PAYLOAD, "active": True}
-        system.handle_event_message("smartchime/events/motion", payload)
-        system.hdmi.play_video.assert_not_called()
-        assert system._active_event_source == "doorbell"
+    def test_plays_second_sound_after_selection(self, system):
+        system.current_sound_index = 1
+        system.play_selected_sound()
+        system.audio.play_sound.assert_called_once_with("chime.wav")
 
-    def test_motion_inactive_stops_video(self, system):
-        system._active_event_source = "motion"
-        payload = {**self.VALID_PAYLOAD, "active": False}
-        system.handle_event_message("smartchime/events/motion", payload)
-        system.hdmi.stop_video.assert_called_once()
-        assert system._active_event_source is None
+    def test_no_sounds_available(self, system):
+        system.available_sounds = []
+        system.play_selected_sound()
+        system.audio.play_sound.assert_not_called()
 
-    def test_motion_inactive_noop_when_doorbell_active(self, system):
-        system._active_event_source = "doorbell"
-        payload = {**self.VALID_PAYLOAD, "active": False}
-        system.handle_event_message("smartchime/events/motion", payload)
-        system.hdmi.stop_video.assert_not_called()
-        assert system._active_event_source == "doorbell"
-
-    # --- Priority: doorbell preempts motion ---
-
-    def test_doorbell_preempts_motion(self, system):
-        """Doorbell active takes over from motion — plays doorbell video, source switches."""
-        system._active_event_source = "motion"
-        payload = {**self.VALID_PAYLOAD, "active": True, "video_url": "http://example.com/doorbell.mp4"}
-        system.handle_event_message("smartchime/events/doorbell", payload)
-        system.audio.play_sound.assert_called_once()
-        system.hdmi.play_video.assert_called_once_with("http://example.com/doorbell.mp4")
-        assert system._active_event_source == "doorbell"
-
-    def test_motion_does_not_play_sound(self, system):
-        """Motion events should not trigger chime playback."""
-        payload = {**self.VALID_PAYLOAD, "active": True}
-        system.handle_event_message("smartchime/events/motion", payload)
+    def test_throttled(self, system):
+        system.play_selected_sound()
+        system.audio.play_sound.reset_mock()
+        system.play_selected_sound()
         system.audio.play_sound.assert_not_called()
 
 
@@ -209,7 +159,6 @@ class TestOnConnect:
         topics = {t[0] for t in subscribed}
         assert topics == {
             "smartchime/events/doorbell",
-            "smartchime/events/motion",
             "smartchime/state/oled",
         }
 
@@ -268,7 +217,7 @@ class TestOnMessage:
         return msg
 
     def test_routes_doorbell_topic(self, system):
-        payload = {"active": True, "timestamp": "2025-01-01T12:00:00", "video_url": "http://example.com/clip.mp4"}
+        payload = {"active": True, "timestamp": "2025-01-01T12:00:00"}
         msg = self._make_msg("smartchime/events/doorbell", payload)
         with patch.object(system, "handle_event_message") as mock_hem:
             system.on_message(None, None, msg)

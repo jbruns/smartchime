@@ -20,7 +20,6 @@ except Exception as e:
 
 from smartchime.audio_manager import AudioManager  # noqa: E402
 from smartchime.encoder_manager import EncoderManager  # noqa: E402
-from smartchime.hdmi_manager import HDMIManager  # noqa: E402
 from smartchime.oled_manager import OLEDManager  # noqa: E402
 from smartchime.shairport_metadata import ShairportMetadata  # noqa: E402
 
@@ -64,8 +63,6 @@ class SmartchimeSystem:
                 oled_manager=self.oled,
             )
 
-            self.hdmi = HDMIManager()
-
             self.encoders = EncoderManager(
                 volume_pins=(
                     self.config["gpio"]["volume_encoder"]["clk"],
@@ -87,15 +84,15 @@ class SmartchimeSystem:
             self.mqtt_client.on_message = self.on_message
             self.mqtt_client.on_disconnect = self.on_disconnect
 
-            self.current_sound_index = None
             self.available_sounds = self.audio.get_available_sounds()
-            self._active_event_source = None  # tracks which event type owns AMOLED ("doorbell" or "motion")
+            self.current_sound_index = 0
             if not self.available_sounds:
                 self.logger.warning("No sound files found in audio directory")
             else:
-                for i in range(0, len(self.available_sounds)):
-                    if self.available_sounds[i] == self.config["audio"]["default_sound"]:
+                for i, name in enumerate(self.available_sounds):
+                    if name == self.config["audio"]["default_sound"]:
                         self.current_sound_index = i
+                        break
 
             self.setup_encoder_callbacks()
 
@@ -134,17 +131,6 @@ class SmartchimeSystem:
         if migrated:
             self.logger.info("Legacy throttle config detected and auto-converted to seconds")
 
-    def toggle_display(self):
-        """Toggle the display power state between on and off."""
-        if self._check_control_throttle("toggle"):
-            self.logger.debug("Display toggle throttled, skipping")
-            return
-
-        if self.hdmi.get_display_power_state() == "off":
-            self.hdmi.play_video(self.config["video"]["default_stream"])
-        else:
-            self.hdmi.stop_video()
-
     def setup_encoder_callbacks(self):
         """Set up the callbacks for the encoders (volume and sound selection)."""
         self.logger.debug("Setting up encoder callbacks")
@@ -169,7 +155,7 @@ class SmartchimeSystem:
         )
 
         self.encoders.setup_sound_select_callbacks(
-            next_sound=self.next_sound, prev_sound=self.prev_sound, play_selected=self.toggle_display
+            next_sound=self.next_sound, prev_sound=self.prev_sound, play_selected=self.play_selected_sound
         )
 
     def _check_control_throttle(self, control_type="default"):
@@ -236,6 +222,20 @@ class SmartchimeSystem:
 
         self.oled.set_mode("centered_2line", "Select sound:", filename, duration=5)
 
+    def play_selected_sound(self):
+        """Play the currently selected sound as a preview."""
+        if self._check_control_throttle("toggle"):
+            self.logger.debug("Sound preview throttled, skipping")
+            return
+
+        if not self.available_sounds:
+            self.logger.warning("Cannot preview sound: no sounds available")
+            return
+
+        sound_file = self.available_sounds[self.current_sound_index]
+        self.logger.info(f"Previewing sound: {sound_file}")
+        self.audio.play_sound(sound_file)
+
     def on_connect(self, client, userdata, flags, reason_code, properties):
         """Handle the MQTT connection event.
 
@@ -250,7 +250,6 @@ class SmartchimeSystem:
             self.logger.info("Connected to MQTT broker")
             topics = [
                 (self.config["mqtt"]["topics"]["doorbell"], 0),
-                (self.config["mqtt"]["topics"]["motion"], 0),
                 (self.config["mqtt"]["topics"]["oled_state"], 0),
             ]
             client.subscribe(topics)
@@ -277,10 +276,7 @@ class SmartchimeSystem:
             self.logger.info("Disconnected from MQTT broker")
 
     def handle_event_message(self, topic, payload):
-        """Handle incoming event messages from MQTT.
-
-        Doorbell events always take priority over motion events for AMOLED display.
-        OLED display changes are managed by the v2 state contract (oled_state topic).
+        """Handle incoming doorbell event messages from MQTT.
 
         Args:
             topic (str): The MQTT topic of the message.
@@ -304,32 +300,12 @@ class SmartchimeSystem:
 
             self.logger.info(f"Event message: topic={topic}, active={payload['active']}, time={event_time}")
 
-            video_url = payload.get("video_url") or self.config["video"]["default_stream"]
-
-            if topic == self.config["mqtt"]["topics"]["doorbell"]:
-                if payload["active"]:
-                    sound_file = (
-                        self.available_sounds[self.current_sound_index] or self.config["audio"]["default_sound"]
-                    )
-                    self.audio.play_sound(sound_file)
-                    self.hdmi.play_video(video_url)
-                    self._active_event_source = "doorbell"
+            if payload["active"]:
+                if self.available_sounds:
+                    sound_file = self.available_sounds[self.current_sound_index]
                 else:
-                    if self._active_event_source == "doorbell":
-                        self.hdmi.stop_video()
-                        self._active_event_source = None
-
-            elif topic == self.config["mqtt"]["topics"]["motion"]:
-                if payload["active"]:
-                    if self._active_event_source != "doorbell":
-                        self.hdmi.play_video(video_url)
-                        self._active_event_source = "motion"
-                    else:
-                        self.logger.info("Motion video suppressed — doorbell has priority")
-                else:
-                    if self._active_event_source == "motion":
-                        self.hdmi.stop_video()
-                        self._active_event_source = None
+                    sound_file = self.config["audio"]["default_sound"]
+                self.audio.play_sound(sound_file)
 
         except Exception as e:
             self.logger.error(f"Error processing {topic} message: {e}")
@@ -347,7 +323,7 @@ class SmartchimeSystem:
         try:
             payload = json.loads(msg.payload.decode())
 
-            if msg.topic in [self.config["mqtt"]["topics"]["doorbell"], self.config["mqtt"]["topics"]["motion"]]:
+            if msg.topic == self.config["mqtt"]["topics"]["doorbell"]:
                 self.handle_event_message(msg.topic, payload)
             elif msg.topic == self.config["mqtt"]["topics"]["oled_state"]:
                 self.handle_oled_state(payload)
@@ -428,8 +404,6 @@ class SmartchimeSystem:
         if getattr(self, "mqtt_client", None):
             self.mqtt_client.loop_stop()
             self.mqtt_client.disconnect()
-        if getattr(self, "hdmi", None):
-            self.hdmi.cleanup()
         if getattr(self, "oled", None):
             self.oled.cleanup()
         if getattr(self, "shairport", None):
