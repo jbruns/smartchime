@@ -9,6 +9,27 @@
 #
 # For more information, see: https://github.com/jbruns/smartchime
 
+
+# TODO: add display and touch rotation configuration for X11
+# rotate display:
+## In /etc/X11/xorg.conf.d, create 99-rotate-display.conf with:
+## Section "Monitor"
+##         Identifier "Monitor0"
+##         Option "Rotate" "right"
+## EndSection
+
+## Section "Screen"
+##         Identifier "Screen0"
+##         Device "Card0"
+##         Monitor "Monitor0"
+## EndSection
+
+# rotate touch:
+## In /etc/X11/xorg.conf.d/40-libinput.conf:
+## after "MatchIsTouchscreen" "on", add:
+## Option "CalibrationMatrix" "0 1 0 -1 0 1 0 0 1"
+# end TODO
+
 set -euo pipefail
 
 INSTALL_DIR="/home/dietpi/smartchime"
