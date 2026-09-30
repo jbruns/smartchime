@@ -2,7 +2,6 @@
 
 import time
 from datetime import UTC, datetime, timedelta
-from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -46,51 +45,6 @@ def mgr(_mock_hardware_modules):
     manager.icon_font = _make_text_font()
     manager.status_font = _make_text_font()
     return manager
-
-
-def _install_fake_composition(mgr):
-    """Replace luma mocks with real image-backed layers for render-path tests."""
-    mgr.status_layer = SimpleNamespace(image=Image.new("1", (mgr.device.width, 10)), height=10, position=(0, 0))
-    mgr.content_layer = SimpleNamespace(image=Image.new("1", (mgr.device.width, 22)), height=22, position=(0, 10))
-    mgr.composition = _TestComposition(mgr.device, [mgr.status_layer, mgr.content_layer])
-
-
-class _TestComposition:
-    """Minimal image composition that mirrors luma's refresh semantics."""
-
-    def __init__(self, device, layers):
-        self.device = device
-        self.composed_images = layers
-        self._background = Image.new("1", (device.width, device.height))
-
-    def __call__(self):
-        return self._background
-
-    def refresh(self):
-        frame = Image.new("1", (self.device.width, self.device.height))
-        for layer in self.composed_images:
-            frame.paste(layer.image, layer.position)
-        self._background = frame
-
-
-class _CopyingCanvas:
-    """Test double for luma.canvas that copies the background up front."""
-
-    def __init__(self, device, background=None, dither=False):
-        del dither
-        self.device = device
-        if background is None:
-            self.image = Image.new("1", (device.width, device.height))
-        else:
-            self.image = background.copy()
-
-    def __enter__(self):
-        return MagicMock()
-
-    def __exit__(self, exc_type, exc, tb):
-        if exc_type is None:
-            self.device.display(self.image)
-        return False
 
 
 class TestOLEDManager:
@@ -306,16 +260,28 @@ class TestOLEDManager:
 
 
 class TestCompositionFlush:
-    def test_flush_displays_refreshed_composition(self, mgr):
-        _install_fake_composition(mgr)
+    def test_flush_pastes_layers_into_one_device_frame(self, mgr):
         mgr.device.display = MagicMock()
+        mgr.status_layer.image.putpixel((127, 9), 1)
         mgr.content_layer.image.putpixel((0, 0), 1)
 
-        with patch("smartchime.oled_manager.canvas", _CopyingCanvas, create=True):
-            mgr._flush_composition()
+        mgr._flush_composition()
 
         displayed = mgr.device.display.call_args.args[0]
+        assert isinstance(displayed, Image.Image)
+        assert (displayed.mode, displayed.size) == ("1", (128, 32))
+        assert displayed.getpixel((127, 9)) != 0
         assert displayed.getpixel((0, 10)) != 0
+        assert displayed.getbbox() == (0, 9, 128, 11)
+
+    def test_flush_replaces_a_non_image_layer_with_blank(self, mgr):
+        mgr.device.display = MagicMock()
+        mgr.content_layer.image = "not an image"
+
+        mgr._flush_composition()
+
+        assert mgr.content_layer.image.size == (128, 22)
+        assert mgr.device.display.call_args.args[0].getbbox() is None
 
 
 # ---------------------------------------------------------------------------
@@ -537,7 +503,6 @@ class TestV2Rotation:
         assert mgr._v2_state.current_item_index == 0
 
     def test_rotation_updates_display_without_one_frame_lag(self, mgr):
-        _install_fake_composition(mgr)
         mgr.device.display = MagicMock()
 
         def fake_update_status_bar():
@@ -556,11 +521,10 @@ class TestV2Rotation:
         mgr.apply_v2_state(payload)
 
         with (
-            patch("smartchime.oled_manager.canvas", _CopyingCanvas, create=True),
             patch.object(mgr, "_update_status_bar", side_effect=fake_update_status_bar),
             patch.object(mgr, "_draw_scrolling_text", side_effect=fake_draw_scrolling_text),
         ):
-            # Seed the composition with the initial long scrolling item.
+            # Seed the display with the initial long scrolling item.
             mgr.update_display()
 
             mgr._v2_state.last_rotation_time = time.monotonic() - 11

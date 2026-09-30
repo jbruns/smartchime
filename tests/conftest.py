@@ -21,7 +21,6 @@ _HARDWARE_MODULES = [
     "luma.core.interface",
     "luma.core.interface.serial",
     "luma.core.render",
-    "luma.core.image_composition",
     "luma.oled",
     "luma.oled.device",
     "lgpio",

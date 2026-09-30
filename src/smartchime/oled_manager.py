@@ -6,7 +6,6 @@ from os import path
 from threading import RLock, Timer
 
 import PIL
-from luma.core.image_composition import ComposableImage, ImageComposition
 from luma.core.interface.serial import spi
 from luma.oled.device import ssd1305
 from PIL import Image, ImageDraw, ImageFont
@@ -19,6 +18,18 @@ class V2Item:
     key: str
     text: str
     priority: int
+
+
+@dataclass
+class Layer:
+    """A 1-bit band of the OLED frame, pasted at a fixed position on every flush.
+
+    Replaces luma's ComposableImage, whose ``image`` is a method rather than a settable attribute.
+    """
+
+    image: Image.Image
+    position: tuple[int, int]
+    height: int
 
 
 @dataclass
@@ -83,13 +94,8 @@ class OLEDManager:
             # self.device._colend += 4
             ###
 
-            self.composition = ImageComposition(self.device)
-            status_image = Image.new("1", (self.device.width, 10))
-            content_image = Image.new("1", (self.device.width, 22))
-            self.status_layer = ComposableImage(status_image, position=(0, 0))
-            self.content_layer = ComposableImage(content_image, position=(0, 10))
-            self.composition.add_image(self.status_layer)
-            self.composition.add_image(self.content_layer)
+            self.status_layer = Layer(Image.new("1", (self.device.width, 10)), position=(0, 0), height=10)
+            self.content_layer = Layer(Image.new("1", (self.device.width, 22)), position=(0, 10), height=22)
             self.logger.info(f"Initialized OLED display on SPI port {spi_port}, device {spi_device}")
             self.logger.info(f"Using PIL/Pillow version: {PIL.__version__}")
 
@@ -641,18 +647,19 @@ class OLEDManager:
         draw.text((motion_x + motion_icon_width + 2, y_off), motion_text, font=self.status_font, fill="white")
 
     def _flush_composition(self):
-        """Validate layers and send the current composition to the device."""
-        for layer in [self.status_layer, self.content_layer]:
+        """Validate layers, paste them into one frame and send it to the device."""
+        layers = [self.status_layer, self.content_layer]
+        for layer in layers:
             if hasattr(layer, "image") and layer.image is not None:
                 if not isinstance(layer.image, Image.Image):
                     layer.image = Image.new("1", (self.device.width, layer.height), 0)
             else:
                 self.logger.warning(f"Missing image in layer: {layer}")
                 layer.image = Image.new("1", (self.device.width, layer.height), 0)
-        # Refresh first: luma's canvas copies the background image immediately,
-        # so passing self.composition() before refresh displays the previous frame.
-        self.composition.refresh()
-        self.device.display(self.composition())
+        frame = Image.new("1", (self.device.width, self.device.height))
+        for layer in layers:
+            frame.paste(layer.image, layer.position)
+        self.device.display(frame)
 
     def _update_status_bar(self):
         """Update the status bar section.

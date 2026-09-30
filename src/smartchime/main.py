@@ -9,26 +9,18 @@ import paho.mqtt.client as mqtt
 import yaml
 
 from smartchime import __version__
-
-logger = logging.getLogger(__name__)
-
-try:
-    from smartchime import luma_patch  # noqa: F401 — must import before any luma usage
-
-    logger.info("Luma patch imported")
-except Exception as e:
-    logger.error(f"Failed to import luma patch: {e}", exc_info=True)
-
-from smartchime.audio_manager import AudioManager  # noqa: E402
-from smartchime.encoder_manager import EncoderManager  # noqa: E402
-from smartchime.host_status import (  # noqa: E402
+from smartchime.audio_manager import AudioManager
+from smartchime.encoder_manager import EncoderManager
+from smartchime.host_status import (
     DEFAULT_DISCOVERY_PREFIX,
     DEFAULT_STATUS_TOPIC,
     discovery_config,
     read_host_status,
 )
-from smartchime.oled_manager import OLEDManager  # noqa: E402
-from smartchime.shairport_metadata import ShairportMetadata  # noqa: E402
+from smartchime.oled_manager import OLEDManager
+from smartchime.shairport_metadata import ShairportMetadata
+
+logger = logging.getLogger(__name__)
 
 HOST_STATUS_INTERVAL = 3600.0
 

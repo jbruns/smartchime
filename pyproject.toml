@@ -11,7 +11,9 @@ requires-python = ">=3.11"
 license = "MIT"
 dependencies = [
     "paho-mqtt~=2.1",
-    "pillow==10.4.0",
+    # luma.oled draws frames with Image.getdata(), which Pillow 14 removes (rm-hull/luma.oled#404);
+    # renovate.json holds Pillow below 14 until that lands.
+    "pillow~=12.3",
     "PyYAML~=6.0.3",
 ]
 
@@ -40,9 +42,6 @@ dev = [
 smartchime = "smartchime.main:main"
 
 [tool.uv]
-# Hold the display stack at what the Pi runs until the Pillow spike (#9) concludes.
-# luma.core is transitive, so Renovate's lockFileMaintenance would otherwise move it.
-constraint-dependencies = ["luma.core==2.5.3"]
 # Rebuild the project when the git tag changes, so the hatch-vcs version stays current.
 cache-keys = [{ file = "pyproject.toml" }, { git = { commit = true, tags = true } }]
 

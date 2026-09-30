@@ -10,9 +10,9 @@
       "automerge": false
     },
     {
-      "description": "Held until the Pillow spike (#9) concludes; pyproject.toml also constrains luma.core.",
-      "matchPackageNames": ["/^pillow$/i", "/^luma[._-]/i"],
-      "enabled": false
+      "description": "luma.oled draws frames with Image.getdata(), which Pillow 14 removes (rm-hull/luma.oled#404).",
+      "matchPackageNames": ["pillow"],
+      "allowedVersions": "<14"
     },
     {
       "description": "The Pi CI jobs run on the Pi's Debian Python; move it by hand when DietPi/Debian moves.",

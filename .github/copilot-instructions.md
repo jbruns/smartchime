@@ -10,10 +10,9 @@ The system follows a manager pattern with `SmartchimeSystem` (in `src/smartchime
 
 - **`audio_manager.py`** — WAV playback via `aplay`, ALSA mixer volume/mute control
 - **AMOLED Panel** — a Chromium kiosk showing the Home Assistant Panel dashboard. The Pi never blanks it; Home Assistant's Panel Mode owns sleep (`docs/adr/0001`)
-- **`oled_manager.py`** — SSD1305 128x32 OLED driven via `luma.oled` (SPI), with a two-layer composition (status bar + content area) and scrolling text
+- **`oled_manager.py`** — SSD1305 128x32 OLED driven via `luma.oled` (SPI), with a two-layer composition (status bar + content area, pasted into one frame by `_flush_composition`) and scrolling text
 - **`encoder_manager.py`** — Two rotary encoders via `gpiozero` (volume control and sound selection)
 - **`shairport_metadata.py`** — Reads AirPlay metadata from the shairport-sync named pipe in a background thread
-- **`luma_patch.py`** — Monkey-patches `luma.core.image_composition` for Pillow compatibility; must be imported before any luma usage
 
 `scripts/smartchime-update` is the Pi's converging deploy script: it deploys the latest release tag with rollback and keeps uv, the APT holds, the `dietpi.txt` update policy and the systemd unit in place (`docs/adr/0003`). Its tests in `tests/test_smartchime_update.py` run it against a real git origin with the system commands stubbed.
 
@@ -22,7 +21,6 @@ All modules live in `src/smartchime/`. Configuration is loaded from `config.yaml
 ## Key Conventions
 
 - **Logging everywhere.** Every module uses `logging.getLogger(__name__)` extensively. Follow this pattern in new code.
-- **`luma_patch` import order matters.** `main.py` imports `luma_patch` before other smartchime modules to patch luma's `ImageComposition.refresh` for modern Pillow.
 - **OLED display uses SSD1305**, but is initialized as `ssd1306` with manual register fixups (`0xDA, 0x12` and column offset adjustments).
 - **Throttle system** — Control inputs are throttled via a cycle-counting mechanism in the main loop (each cycle ≈ 12.5ms via `time.sleep(0.0125)`). Throttle periods are configured per control type.
 - **MQTT payloads** — Doorbell events expect `{"active": bool, "timestamp": "ISO8601"}`. The OLED takes a retained v2 OLED State snapshot. Smartchime publishes its retained Host Status (`host_status.py`, read from DietPi's own update-check files) with Home Assistant device discovery, on connect and hourly. All three contracts are JSON schemas in `mqtt-schema/`.
@@ -44,7 +42,7 @@ uv sync
 uv sync --frozen --extra hw --no-dev --python /usr/bin/python3 --no-python-downloads
 ```
 
-Dependencies are declared in `pyproject.toml` and locked in `uv.lock`; after changing them run `uv lock` and commit both. They are split into core (paho-mqtt, pillow, PyYAML), the `hw` extra (hardware-specific: luma.oled, gpiozero, alsaaudio, etc.), and the `dev` dependency group (ruff, pytest). `luma.core` is held by a uv constraint and Renovate ignores `pillow`/`luma.*` until the Pillow spike (#9) concludes.
+Dependencies are declared in `pyproject.toml` and locked in `uv.lock`; after changing them run `uv lock` and commit both. They are split into core (paho-mqtt, pillow, PyYAML), the `hw` extra (hardware-specific: luma.oled, gpiozero, alsaaudio, etc.), and the `dev` dependency group (ruff, pytest). Renovate holds Pillow below 14 because luma.oled still calls `Image.getdata()` (rm-hull/luma.oled#404).
 
 The version comes from the git tag via `hatch-vcs`; releasing is `git tag vX.Y.Z` with no bump step. `smartchime.__version__` reads the installed distribution's metadata.
 
