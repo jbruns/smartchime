@@ -64,9 +64,9 @@ Most of the setup is automated via two files placed on the SD card before first 
 3. **Boot the Pi.** DietPi will run unattended: applying system settings, installing packages (including shairport-sync with AirPlay 2 support), then executing the custom script.
 
    The custom script handles:
-   - Enabling SPI and the `vc4-kms-v3d` (KMS) display driver
-   - Configuring the HDMI output for the Waveshare 5.5" AMOLED (1080×1920@60Hz, rotated 270°)
-   - Configuring X11 display and touch rotation for the Waveshare AMOLED
+   - Enabling SPI and the `vc4-kms-v3d` (KMS) display driver, with HDMI audio off (`noaudio`) so it can't compete with the HifiBerry
+   - Letting KMS take the Waveshare 5.5" AMOLED's mode (1080×1920@60Hz) from its EDID (`disable_fw_kms_setup=1`), and rotating the boot console 270°
+   - Configuring X11 display and touch rotation for the Waveshare AMOLED, and hiding the mouse cursor
    - Turning off X11 screen blanking and DPMS: Home Assistant decides when the Panel sleeps ([ADR 0001](docs/adr/0001-home-assistant-owns-panel-sleep.md))
    - Adding the `dietpi` user to hardware groups (`video`, `render`, `audio`, `gpio`, `spi`)
    - Configuring shairport-sync (ALSA mixer → `Digital`, metadata pipe enabled)
@@ -82,11 +82,11 @@ Most of the setup is automated via two files placed on the SD card before first 
    sudo reboot
    ```
 
-5. **Verify the display.** After reboot, Chromium should launch automatically in kiosk mode on the AMOLED at the correct resolution and rotation. If the display settings need adjustment:
+5. **Verify the display.** After reboot, Chromium should launch automatically in kiosk mode on the AMOLED in landscape, with no mouse cursor. The active mode should be the EDID's `1080x1920` at 137.52 MHz, rotated `right`:
    ```bash
-   sudo dietpi-config
+   DISPLAY=:0 xrandr --verbose
    ```
-   Navigate to *Display Options* → set `vc4-kms-v3d` driver, 1080×1920@60 resolution, 270° rotation.
+   Legacy `hdmi_*` options in `config.txt` (`hdmi_group`, `hdmi_timings`, `config_hdmi_boost`, …) have no effect under KMS; don't add them.
 
 6. **Edit `config.yaml`** with your environment-specific settings:
    ```bash
@@ -162,7 +162,8 @@ cp config.example.yaml config.yaml
 ```ini
 [Unit]
 Description=Smartchime
-After=network.target
+Wants=network-online.target
+After=network-online.target
 
 [Service]
 Type=exec

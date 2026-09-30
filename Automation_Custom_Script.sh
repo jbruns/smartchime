@@ -13,7 +13,10 @@
 set -euo pipefail
 
 INSTALL_DIR="/home/dietpi/smartchime"
-CONFIG_TXT="/boot/config.txt"
+BOOT_DIR="/boot/firmware"
+[ -d "$BOOT_DIR" ] || BOOT_DIR="/boot"
+CONFIG_TXT="$BOOT_DIR/config.txt"
+CMDLINE_TXT="$BOOT_DIR/cmdline.txt"
 SHAIRPORT_CONF="/usr/local/etc/shairport-sync.conf"
 XORG_CONF_DIR="/etc/X11/xorg.conf.d"
 
@@ -45,28 +48,34 @@ EndSection
 ROTATE_CONF
 echo "Display rotation config written to $XORG_CONF_DIR/99-rotate-display.conf."
 
-LIBINPUT_CONF="$XORG_CONF_DIR/40-libinput.conf"
-if [ ! -f "$LIBINPUT_CONF" ]; then
-    cp /usr/share/X11/xorg.conf.d/40-libinput.conf "$XORG_CONF_DIR/"
-    echo "Copied 40-libinput.conf to $XORG_CONF_DIR/."
-fi
-if ! grep -q "CalibrationMatrix" "$LIBINPUT_CONF"; then
-    sed -i '/MatchIsTouchscreen/a\        Option "CalibrationMatrix" "0 1 0 -1 0 1 0 0 1"' "$LIBINPUT_CONF"
-    echo "Touch rotation added to $LIBINPUT_CONF."
-else
-    echo "Touch rotation already configured in $LIBINPUT_CONF."
-fi
+# Merges with the stock libinput touchscreen catchall; no need to copy it.
+cat > "$XORG_CONF_DIR/99-smartchime-touch.conf" << 'TOUCH_CONF'
+Section "InputClass"
+        Identifier "Smartchime touch rotation"
+        MatchIsTouchscreen "on"
+        Option "CalibrationMatrix" "0 1 0 -1 0 1 0 0 1"
+EndSection
+TOUCH_CONF
+echo "Touch rotation config written to $XORG_CONF_DIR/99-smartchime-touch.conf."
+
+# ---------- Display: hide mouse cursor ----------
+# The Panel is touch-only and always on; startx prefers ~/.xserverrc over the
+# system xserverrc, so this only affects the dietpi kiosk session.
+echo ""
+echo "--- Hiding X11 mouse cursor ---"
+cat > /home/dietpi/.xserverrc << 'XSERVERRC'
+#!/bin/sh
+exec /usr/bin/X -nocursor -nolisten tcp "$@"
+XSERVERRC
+chown dietpi:dietpi /home/dietpi/.xserverrc
+chmod 755 /home/dietpi/.xserverrc
+echo "Cursor disabled via /home/dietpi/.xserverrc."
 
 # ---------- Display: never blank (Home Assistant owns Panel sleep) ----------
 # Sleep is Home Assistant's pure-black Panel Mode (docs/adr/0001), so X must
 # never blank or power down the screen itself.
 echo ""
 echo "--- Disabling X11 DPMS and screen blanking ---"
-OLD_DPMS_CONF="$XORG_CONF_DIR/97-smartchime-dpms.conf"
-if [ -f "$OLD_DPMS_CONF" ]; then
-    rm "$OLD_DPMS_CONF"
-    echo "Removed old DPMS timeout config: $OLD_DPMS_CONF"
-fi
 cat > "$XORG_CONF_DIR/98-smartchime-no-blanking.conf" << 'NO_BLANK_CONF'
 # Smartchime: Home Assistant owns Panel sleep; X never blanks the display.
 Section "Extensions"
@@ -83,30 +92,35 @@ NO_BLANK_CONF
 echo "No-blanking config written to $XORG_CONF_DIR/98-smartchime-no-blanking.conf."
 
 # ---------- Hardware: KMS overlay ----------
+# Full KMS with 256MB CMA; noaudio keeps VC4 HDMI audio from competing with
+# the HifiBerry.
 echo ""
 echo "--- Configuring display driver (KMS) ---"
-/boot/dietpi/func/dietpi-set_hardware rpi-opengl vc4-kms-v3d
+/boot/dietpi/func/dietpi-set_hardware rpi-opengl vc4-kms-v3d 256
+if ! grep -Eq '^[[:blank:]]*dtoverlay=vc4-kms-v3d(,.*)?,noaudio(,|$)' "$CONFIG_TXT"; then
+    sed --follow-symlinks -Ei '/^[[:blank:]]*dtoverlay=vc4-kms-v3d(,|$)/s/$/,noaudio/' "$CONFIG_TXT"
+fi
+grep -E '^[[:blank:]]*dtoverlay=vc4-kms-v3d' "$CONFIG_TXT"
 
 # ---------- Hardware: HDMI display ----------
+# The Waveshare 5.5" AMOLED's EDID advertises the correct native mode
+# (1080x1920@60, 137.52MHz), and KMS ignores legacy hdmi_* timings. But the
+# firmware would otherwise pass the kernel a bogus 1280x720@100 mode with
+# overscan margins (from the EDID's CEA block), so stop it from doing that.
 echo ""
 echo "--- Configuring HDMI display (Waveshare 5.5\" AMOLED) ---"
-# Target: 1080x1920@60Hz, rotated 270 degrees.
-# If these settings don't produce the correct output, use dietpi-config
-# (Display Options) as a fallback.
-if ! grep -q "^hdmi_cvt=" "$CONFIG_TXT"; then
-    cat >> "$CONFIG_TXT" << 'HDMI_CONFIG'
-
-# Smartchime: Waveshare 5.5" AMOLED display (1080x1920@60Hz)
-max_framebuffer_height=1920
-config_hdmi_boost=10
-hdmi_group=2
-hdmi_force_hotplug=1
-hdmi_mode=87
-hdmi_timings=1080 1 80 16 80 1920 1 4 10 16 0 0 0 60 0 146950000 3
-HDMI_CONFIG
-    echo "HDMI display settings added to config.txt."
+if ! grep -q "^disable_fw_kms_setup=1" "$CONFIG_TXT"; then
+    printf '\n# Smartchime: let KMS take the AMOLED mode from its EDID\ndisable_fw_kms_setup=1\n' >> "$CONFIG_TXT"
+    echo "disable_fw_kms_setup=1 added to config.txt."
 else
-    echo "HDMI display settings already present."
+    echo "disable_fw_kms_setup already set."
+fi
+# Rotate the boot console to match the X11 rotation.
+if ! grep -q "video=HDMI-A-1:" "$CMDLINE_TXT"; then
+    sed --follow-symlinks -i '1s/$/ video=HDMI-A-1:1080x1920@60,rotate=270/' "$CMDLINE_TXT"
+    echo "Console rotation added to cmdline.txt."
+else
+    echo "HDMI-A-1 video= already present in cmdline.txt."
 fi
 
 # ---------- User groups ----------
@@ -178,7 +192,8 @@ echo "--- Creating systemd service (disabled) ---"
 cat > /etc/systemd/system/smartchime.service << 'SYSTEMD_SERVICE'
 [Unit]
 Description=Smartchime
-After=network.target
+Wants=network-online.target
+After=network-online.target
 
 [Service]
 Type=exec
@@ -205,10 +220,10 @@ echo ""
 echo " 1. Reboot to apply hardware changes (SPI, display driver):"
 echo "      sudo reboot"
 echo ""
-echo " 2. After reboot, verify the display output."
-echo "    Chromium kiosk will manage the display. If the resolution"
-echo "    or rotation is wrong, fix it with:"
-echo "      sudo dietpi-config  (Display Options)"
+echo " 2. After reboot, verify the display output. Chromium kiosk"
+echo "    should fill the AMOLED in landscape with no cursor. Check the"
+echo "    active mode with:"
+echo "      DISPLAY=:0 xrandr --verbose"
 echo ""
 echo " 3. Edit config.yaml with your MQTT broker, audio settings, etc.:"
 echo "      nano $INSTALL_DIR/config.yaml"
