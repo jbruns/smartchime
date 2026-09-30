@@ -77,7 +77,9 @@ def _write_stub(path: Path, body: str) -> None:
 
 
 def _git(*args: str, cwd: Path) -> str:
-    return subprocess.run(["git", *args], cwd=cwd, check=True, capture_output=True, text=True).stdout.strip()
+    # CI runners have no git identity configured.
+    identity = ["-c", "user.name=t", "-c", "user.email=t@t"]
+    return subprocess.run(["git", *identity, *args], cwd=cwd, check=True, capture_output=True, text=True).stdout.strip()
 
 
 class Host:
