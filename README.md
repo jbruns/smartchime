@@ -121,14 +121,14 @@ If you prefer to set things up by hand (or on a non-DietPi system), here are the
 ```bash
 sudo apt update
 sudo apt install -y \
-    python3-pip \
     python3-dev \
-    python3.13-venv \
     build-essential \
     gcc \
     libasound2-dev \
     liblgpio-dev \
+    curl \
     git
+curl -LsSf https://astral.sh/uv/install.sh | sh   # installs uv to ~/.local/bin
 sudo usermod -aG video,render,audio,gpio,spi dietpi
 ```
 
@@ -152,9 +152,7 @@ KERNEL=="vcio", GROUP="video", MODE="0660"
 ```bash
 git clone https://github.com/jbruns/smartchime.git /home/dietpi/smartchime
 cd /home/dietpi/smartchime
-python3 -m venv .venv
-source .venv/bin/activate
-pip install ".[hw]"
+uv sync --frozen --extra hw --no-dev --python /usr/bin/python3 --no-python-downloads
 cp config.example.yaml config.yaml
 ```
 
@@ -183,16 +181,24 @@ Then: `sudo systemctl daemon-reload`
 
 ### Development setup
 
-For local development (linting, testing — no hardware packages):
+Dependencies are locked in `uv.lock`. Install [uv](https://docs.astral.sh/uv/), then:
 
 ```bash
-pip install -e ".[dev]"
+uv sync                  # local development: dev tools, no hardware packages
+uv sync --extra hw       # developing on the Pi: add the hardware packages
+uv run ruff check .
+uv run pytest -m "not hardware"
 ```
 
-For development on the Pi (with hardware packages):
+Change dependencies in `pyproject.toml`, then run `uv lock` and commit both files. Renovate proposes updates weekly (`renovate.json`, extending the shared preset in [jbruns/ha-elevations](https://github.com/jbruns/ha-elevations/blob/main/docs/ci.md)).
+
+### Releases
+
+The version comes from the git tag (via `hatch-vcs`), so there is no version to bump. To release, tag and push:
 
 ```bash
-pip install -e ".[dev,hw]"
+git tag vX.Y.Z
+git push origin vX.Y.Z
 ```
 
 ## Integrating with Home Assistant

@@ -1,0 +1,24 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": ["github>jbruns/ha-elevations//renovate/ha"],
+  "packageRules": [
+    {
+      "description": "The Pi app's runtime dependencies (core and the hw extra), grouped and always reviewed.",
+      "matchFileNames": ["pyproject.toml"],
+      "matchDepTypes": ["project.dependencies", "project.optional-dependencies"],
+      "groupName": "pi-runtime",
+      "automerge": false
+    },
+    {
+      "description": "Held until the Pillow spike (#9) concludes; pyproject.toml also constrains luma.core.",
+      "matchPackageNames": ["/^pillow$/i", "/^luma[._-]/i"],
+      "enabled": false
+    },
+    {
+      "description": "The Pi CI jobs run on the Pi's Debian Python; move it by hand when DietPi/Debian moves.",
+      "matchFileNames": [".github/workflows/ci.yml"],
+      "matchDepNames": ["python"],
+      "enabled": false
+    }
+  ]
+}

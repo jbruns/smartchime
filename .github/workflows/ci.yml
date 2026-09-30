@@ -6,32 +6,37 @@ on:
   pull_request:
     branches: [main]
 
+permissions:
+  contents: read
+
+# The Pi jobs run on Python 3.13, the Pi's Debian Python. Move it only when DietPi/Debian moves;
+# renovate.json stops Renovate from bumping it.
 jobs:
   lint:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+        with:
+          fetch-depth: 0 # hatch-vcs reads the version from git tags
+      - uses: astral-sh/setup-uv@v10.2.0
         with:
           python-version: "3.13"
-      - run: pip install -e ".[dev]"
-      - run: ruff check .
-      - run: ruff format --check .
+      - run: uv sync --frozen
+      - run: uv run ruff check .
+      - run: uv run ruff format --check .
 
   test:
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        python-version: ["3.13"]
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
         with:
-          python-version: ${{ matrix.python-version }}
-      - run: pip install -e ".[dev]"
-      - run: pytest -m "not hardware" --cov --cov-report=term-missing --cov-report=xml -q
+          fetch-depth: 0 # hatch-vcs reads the version from git tags
+      - uses: astral-sh/setup-uv@v10.2.0
+        with:
+          python-version: "3.13"
+      - run: uv sync --frozen
+      - run: uv run pytest -m "not hardware" --cov --cov-report=term-missing --cov-report=xml -q
       - uses: actions/upload-artifact@v4
-        if: matrix.python-version == '3.13'
         with:
           name: coverage-report
           path: coverage.xml

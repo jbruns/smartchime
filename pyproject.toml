@@ -1,10 +1,10 @@
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling", "hatch-vcs"]
 build-backend = "hatchling.build"
 
 [project]
 name = "smartchime"
-version = "2.5.0"
+dynamic = ["version"]
 description = "A smart doorbell system for Raspberry Pi 4B"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -24,6 +24,9 @@ hw = [
     "spidev~=3.8",
     "lgpio~=0.2.2.0"
 ]
+
+[dependency-groups]
+# Installed by default with `uv sync`; the Pi skips it with `--no-dev`.
 dev = [
     "ruff~=0.15",
     "pytest~=9.0",
@@ -34,6 +37,17 @@ dev = [
 
 [project.scripts]
 smartchime = "smartchime.main:main"
+
+[tool.uv]
+# Hold the display stack at what the Pi runs until the Pillow spike (#9) concludes.
+# luma.core is transitive, so Renovate's lockFileMaintenance would otherwise move it.
+constraint-dependencies = ["luma.core==2.5.3"]
+# Rebuild the project when the git tag changes, so the hatch-vcs version stays current.
+cache-keys = [{ file = "pyproject.toml" }, { git = { commit = true, tags = true } }]
+
+[tool.hatch.version]
+# The version is the git tag (vX.Y.Z); untagged commits get a dev version.
+source = "vcs"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/smartchime"]

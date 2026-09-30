@@ -29,22 +29,21 @@ All modules live in `src/smartchime/`. Configuration is loaded from `config.yaml
 ## Code Quality
 
 - **Ruff** is configured in `pyproject.toml` for linting and formatting (target: py311, line-length: 120).
-- **Pytest** is set up with tests in `tests/`. Hardware-dependent tests use the `@pytest.mark.hardware` marker. Run `pytest` to execute tests (excluding hardware tests by default with `-m "not hardware"`).
+- **Pytest** is set up with tests in `tests/`. Hardware-dependent tests use the `@pytest.mark.hardware` marker. Run `uv run pytest -m "not hardware"` to execute tests without the hardware tests.
 - Hardware dependencies are mocked in `tests/conftest.py` so tests run on any platform.
 
 ## Setup
 
 ```bash
-python3 -m venv .venv
-source .venv/bin/activate
+# Local development (dev tools, no hardware packages):
+uv sync
 
-# Local development (no hardware packages):
-pip install -e ".[dev]"
-
-# On the Pi (with hardware packages):
-pip install ".[hw]"
+# On the Pi (hardware packages, no dev tools, system Python):
+uv sync --frozen --extra hw --no-dev --python /usr/bin/python3 --no-python-downloads
 ```
 
-The project uses `pyproject.toml` exclusively for dependency management. Dependencies are split into core (paho-mqtt, pillow, PyYAML), `hw` (hardware-specific: luma.oled, gpiozero, alsaaudio, etc.), and `dev` (ruff, pytest).
+Dependencies are declared in `pyproject.toml` and locked in `uv.lock`; after changing them run `uv lock` and commit both. They are split into core (paho-mqtt, pillow, PyYAML), the `hw` extra (hardware-specific: luma.oled, gpiozero, alsaaudio, etc.), and the `dev` dependency group (ruff, pytest). `luma.core` is held by a uv constraint and Renovate ignores `pillow`/`luma.*` until the Pillow spike (#9) concludes.
+
+The version comes from the git tag via `hatch-vcs`; releasing is `git tag vX.Y.Z` with no bump step. `smartchime.__version__` reads the installed distribution's metadata.
 
 Target platform: Raspberry Pi 4B running DietPi with HifiBerry DAC+ overlay, SPI enabled, and FKMS video driver.
