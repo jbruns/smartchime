@@ -67,6 +67,7 @@ Most of the setup is automated via two files placed on the SD card before first 
    - Enabling SPI and the `vc4-kms-v3d` (KMS) display driver
    - Configuring the HDMI output for the Waveshare 5.5" AMOLED (1080×1920@60Hz, rotated 270°)
    - Configuring X11 display and touch rotation for the Waveshare AMOLED
+   - Turning off X11 screen blanking and DPMS: Home Assistant decides when the Panel sleeps ([ADR 0001](docs/adr/0001-home-assistant-owns-panel-sleep.md))
    - Adding the `dietpi` user to hardware groups (`video`, `render`, `audio`, `gpio`, `spi`)
    - Configuring shairport-sync (ALSA mixer → `Digital`, metadata pipe enabled)
    - Cloning this repository to `/home/dietpi/smartchime`

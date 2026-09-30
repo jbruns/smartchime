@@ -57,6 +57,31 @@ else
     echo "Touch rotation already configured in $LIBINPUT_CONF."
 fi
 
+# ---------- Display: never blank (Home Assistant owns Panel sleep) ----------
+# Sleep is Home Assistant's pure-black Panel Mode (docs/adr/0001), so X must
+# never blank or power down the screen itself.
+echo ""
+echo "--- Disabling X11 DPMS and screen blanking ---"
+OLD_DPMS_CONF="$XORG_CONF_DIR/97-smartchime-dpms.conf"
+if [ -f "$OLD_DPMS_CONF" ]; then
+    rm "$OLD_DPMS_CONF"
+    echo "Removed old DPMS timeout config: $OLD_DPMS_CONF"
+fi
+cat > "$XORG_CONF_DIR/98-smartchime-no-blanking.conf" << 'NO_BLANK_CONF'
+# Smartchime: Home Assistant owns Panel sleep; X never blanks the display.
+Section "Extensions"
+        Option "DPMS" "Disable"
+EndSection
+
+Section "ServerFlags"
+        Option "BlankTime" "0"
+        Option "StandbyTime" "0"
+        Option "SuspendTime" "0"
+        Option "OffTime" "0"
+EndSection
+NO_BLANK_CONF
+echo "No-blanking config written to $XORG_CONF_DIR/98-smartchime-no-blanking.conf."
+
 # ---------- Hardware: KMS overlay ----------
 echo ""
 echo "--- Configuring display driver (KMS) ---"
