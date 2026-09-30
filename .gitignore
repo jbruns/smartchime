@@ -10,3 +10,5 @@ build/
 # Local worktrees and secrets.
 .worktrees/
 .env
+
+.agents/skills/
