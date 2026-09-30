@@ -15,6 +15,8 @@ The system follows a manager pattern with `SmartchimeSystem` (in `src/smartchime
 - **`shairport_metadata.py`** — Reads AirPlay metadata from the shairport-sync named pipe in a background thread
 - **`luma_patch.py`** — Monkey-patches `luma.core.image_composition` for Pillow compatibility; must be imported before any luma usage
 
+`scripts/smartchime-update` is the Pi's converging deploy script: it deploys the latest release tag with rollback and keeps uv, the APT holds, the `dietpi.txt` update policy and the systemd unit in place (`docs/adr/0003`). Its tests in `tests/test_smartchime_update.py` run it against a real git origin with the system commands stubbed.
+
 All modules live in `src/smartchime/`. Configuration is loaded from `config.yaml` (copy `config.example.yaml` to create it). MQTT topics, GPIO pins, audio paths, and throttle timings are all config-driven.
 
 ## Key Conventions

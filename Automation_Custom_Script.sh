@@ -167,15 +167,6 @@ else
     echo "Repository already exists at $INSTALL_DIR."
 fi
 
-# ---------- Python venv + install ----------
-echo ""
-echo "--- Setting up Python virtual environment ---"
-cd "$INSTALL_DIR"
-sudo -u dietpi python3 -m venv .venv
-echo "Installing smartchime with hardware dependencies..."
-sudo -u dietpi .venv/bin/pip install --quiet ".[hw]"
-echo "Python environment ready."
-
 # ---------- Configuration file ----------
 echo ""
 echo "--- Setting up configuration ---"
@@ -186,28 +177,13 @@ else
     echo "config.yaml already exists."
 fi
 
-# ---------- systemd service ----------
+# ---------- Deploy + converge ----------
+# smartchime-update installs uv, checks out the latest release, syncs the venv, holds the
+# kernel/firmware packages, sets the dietpi.txt update policy and installs smartchime.service
+# (left disabled until you enable it). Run it again later to update.
 echo ""
-echo "--- Creating systemd service (disabled) ---"
-cat > /etc/systemd/system/smartchime.service << 'SYSTEMD_SERVICE'
-[Unit]
-Description=Smartchime
-Wants=network-online.target
-After=network-online.target
-
-[Service]
-Type=exec
-WorkingDirectory=/home/dietpi/smartchime
-ExecStart=/home/dietpi/smartchime/.venv/bin/python -m smartchime
-Restart=always
-User=dietpi
-Group=dietpi
-
-[Install]
-WantedBy=multi-user.target
-SYSTEMD_SERVICE
-systemctl daemon-reload
-echo "Service created at /etc/systemd/system/smartchime.service (not yet enabled)."
+echo "--- Running smartchime-update ---"
+"$INSTALL_DIR/scripts/smartchime-update"
 
 # ---------- Summary ----------
 echo ""
@@ -230,5 +206,8 @@ echo "      nano $INSTALL_DIR/config.yaml"
 echo ""
 echo " 4. Enable and start the service:"
 echo "      sudo systemctl enable --now smartchime.service"
+echo ""
+echo " 5. Update to the latest release (rolls back if it fails):"
+echo "      sudo smartchime-update"
 echo ""
 echo "=========================================="

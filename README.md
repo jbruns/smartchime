@@ -71,9 +71,8 @@ Most of the setup is automated via two files placed on the SD card before first 
    - Adding the `dietpi` user to hardware groups (`video`, `render`, `audio`, `gpio`, `spi`)
    - Configuring shairport-sync (ALSA mixer → `Digital`, metadata pipe enabled)
    - Cloning this repository to `/home/dietpi/smartchime`
-   - Creating a Python venv and installing dependencies (`pip install ".[hw]"`)
    - Copying `config.example.yaml` → `config.yaml`
-   - Creating a `smartchime.service` systemd unit (disabled — you enable it after configuring)
+   - Running [`smartchime-update`](#updating), which installs uv, deploys the latest release and creates a `smartchime.service` systemd unit (disabled — you enable it after configuring)
 
    Script output is logged to `/var/tmp/dietpi/logs/dietpi-automation_custom_script.log`.
 
@@ -103,6 +102,29 @@ Most of the setup is automated via two files placed on the SD card before first 
    ```bash
    sudo systemctl enable --now smartchime.service
    ```
+
+### Updating
+
+The Pi runs only tagged releases. To update, run:
+
+```bash
+sudo smartchime-update
+```
+
+It checks out the latest `vX.Y.Z` tag, syncs the venv with uv and restarts `smartchime.service`. If the service isn't still up 30 seconds later, it rolls back to the previous release (never below `v2.5.0`, the first uv release) and exits non-zero with the reason. If you're already on the latest release, it doesn't restart anything.
+
+Every run also converges the host, so it's safe to repeat:
+- installs uv to `~dietpi/.local/bin` (or runs `uv self update`), and replaces an old pip venv with a uv one
+- holds `linux-image-rpi-v8`, `raspi-firmware` and `rpi-eeprom`, and sets `/boot/dietpi.txt` to apply APT upgrades automatically and only notify of DietPi updates ([ADR 0003](docs/adr/0003-os-updates-apt-auto-applies-kernel-firmware-held.md))
+- installs or updates the `smartchime.service` unit, and links `/usr/local/bin/smartchime-update`
+
+To apply the held kernel/firmware updates, run `sudo smartchime-update --os`. It tells you whether a reboot is required but doesn't reboot.
+
+A chime set up before `smartchime-update` existed migrates by running it once from the repository:
+
+```bash
+git -C ~/smartchime fetch origin && git -C ~/smartchime show origin/main:scripts/smartchime-update | sudo bash
+```
 
 ### Manual setup
 
@@ -156,7 +178,7 @@ uv sync --frozen --extra hw --no-dev --python /usr/bin/python3 --no-python-downl
 cp config.example.yaml config.yaml
 ```
 
-**systemd service** — create `/etc/systemd/system/smartchime.service`:
+**systemd service** — create `/etc/systemd/system/smartchime.service` (on DietPi, `sudo scripts/smartchime-update` does this, and the uv install and sync above):
 ```ini
 [Unit]
 Description=Smartchime
@@ -200,6 +222,8 @@ The version comes from the git tag (via `hatch-vcs`), so there is no version to 
 git tag vX.Y.Z
 git push origin vX.Y.Z
 ```
+
+Then deploy it on the Pi with `sudo smartchime-update` (see [Updating](#updating)).
 
 ## Integrating with Home Assistant
 

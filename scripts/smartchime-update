@@ -1,0 +1,269 @@
+#!/bin/bash
+# smartchime-update: deploy the latest Smartchime release and keep the host configured.
+#
+#   sudo smartchime-update          converge the host, then deploy the latest vX.Y.Z tag
+#   sudo smartchime-update --os     converge the host, then upgrade the held kernel/firmware packages
+#
+# Every run converges: uv, the venv, APT holds, dietpi.txt update policy and the systemd unit.
+# See docs/adr/0003-os-updates-apt-auto-applies-kernel-firmware-held.md.
+#
+# Everything lives in functions and main is called on the last line, so checking out a new tag
+# (which rewrites this file) cannot change the code bash is running.
+
+set -euo pipefail
+
+APP_USER="${SMARTCHIME_USER:-dietpi}"
+APP_HOME="${SMARTCHIME_HOME:-/home/$APP_USER}"
+APP_DIR="${SMARTCHIME_DIR:-$APP_HOME/smartchime}"
+UV="$APP_HOME/.local/bin/uv"
+DIETPI_TXT="${SMARTCHIME_DIETPI_TXT:-/boot/dietpi.txt}"
+UNIT_PATH="${SMARTCHIME_UNIT:-/etc/systemd/system/smartchime.service}"
+BIN_LINK="${SMARTCHIME_BIN_LINK:-/usr/local/bin/smartchime-update}"
+REBOOT_REQUIRED="${SMARTCHIME_REBOOT_REQUIRED:-/run/reboot-required}"
+# A kernel or firmware update can break the HifiBerry, KMS or the kiosk, so these only move with --os.
+HELD_PACKAGES=(linux-image-rpi-v8 raspi-firmware rpi-eeprom)
+HEALTH_WAIT=30
+# The first release with uv.lock; older tags can't be synced, so rollback never goes below it.
+FIRST_UV_RELEASE=v2.5.0
+# Set by converge when the unit or venv changed underneath the running service.
+NEEDS_RESTART=0
+
+log() { echo "==> $*"; }
+
+as_user() { sudo -u "$APP_USER" -H -- "$@"; }
+
+app_git() { as_user git -C "$APP_DIR" -c advice.detachedHead=false "$@"; }
+
+# uv lives in the app user's ~/.local/bin, installed with the official standalone installer.
+ensure_uv() {
+    if [ -x "$UV" ]; then
+        log "Updating uv"
+        as_user "$UV" self update --quiet || log "WARNING: uv self update failed; continuing with the installed uv"
+    else
+        log "Installing uv to ${UV%/*}"
+        curl -LsSf https://astral.sh/uv/install.sh | as_user env UV_INSTALL_DIR="${UV%/*}" sh
+    fi
+}
+
+# A venv made by `python3 -m venv` + pip (the pre-uv install) is rebuilt by the next uv sync.
+migrate_pip_venv() {
+    local cfg="$APP_DIR/.venv/pyvenv.cfg"
+    [ -f "$cfg" ] || return 0
+    grep -q '^uv = ' "$cfg" && return 0
+    log "Removing the pip venv; uv sync will rebuild it"
+    rm -rf "$APP_DIR/.venv"
+    NEEDS_RESTART=1
+}
+
+hold_os_packages() {
+    log "Holding ${HELD_PACKAGES[*]}"
+    apt-mark hold "${HELD_PACKAGES[@]}" >/dev/null
+}
+
+# Set KEY=VALUE in dietpi.txt, where DietPi's daily cron job reads it.
+set_dietpi_option() {
+    local key=$1 value=$2 tmp
+    grep -Eq "^[[:blank:]]*${key}=${value}[[:blank:]]*$" "$DIETPI_TXT" && return 0
+    log "Setting $key=$value in $DIETPI_TXT"
+    if grep -Eq "^[[:blank:]]*$key=" "$DIETPI_TXT"; then
+        tmp=$(mktemp)
+        sed -E "s/^[[:blank:]]*$key=.*/$key=$value/" "$DIETPI_TXT" > "$tmp"
+        cat "$tmp" > "$DIETPI_TXT"
+        rm -f "$tmp"
+    else
+        echo "$key=$value" >> "$DIETPI_TXT"
+    fi
+}
+
+unit_file() {
+    cat <<EOF
+[Unit]
+Description=Smartchime
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=exec
+WorkingDirectory=$APP_DIR
+ExecStart=$APP_DIR/.venv/bin/python -m smartchime
+Restart=always
+User=$APP_USER
+Group=$APP_USER
+
+[Install]
+WantedBy=multi-user.target
+EOF
+}
+
+# Install or update the unit. It is left disabled on a fresh install: enable it after editing config.yaml.
+install_unit() {
+    if [ -f "$UNIT_PATH" ] && [ "$(cat "$UNIT_PATH")" = "$(unit_file)" ]; then
+        return 0
+    fi
+    log "Installing $UNIT_PATH"
+    unit_file > "$UNIT_PATH"
+    systemctl daemon-reload
+    NEEDS_RESTART=1
+}
+
+# Link the command into PATH; the link follows whichever tag is checked out.
+install_command() {
+    ln -sfn "$APP_DIR/scripts/smartchime-update" "$BIN_LINK"
+}
+
+latest_tag() {
+    app_git tag --list 'v*' --sort=-v:refname | grep -E -m 1 '^v[0-9]+\.[0-9]+\.[0-9]+$'
+}
+
+sync_venv() {
+    (cd "$APP_DIR" && as_user "$UV" sync --frozen --extra hw --no-dev --python /usr/bin/python3 --no-python-downloads)
+}
+
+# The release tag HEAD is exactly on, if any.
+current_tag() {
+    app_git describe --tags --exact-match 2>/dev/null | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' || true
+}
+
+# version_ge vA.B.C vX.Y.Z: true if the first release is at or after the second.
+version_ge() {
+    local IFS=.
+    # shellcheck disable=SC2206
+    local a=(${1#v}) b=(${2#v}) i
+    for i in 0 1 2; do
+        [ "${a[i]}" -gt "${b[i]}" ] && return 0
+        [ "${a[i]}" -lt "${b[i]}" ] && return 1
+    done
+    return 0
+}
+
+# Restart the service and wait: healthy means still active, with no automatic restarts in between
+# (Restart=always would otherwise hide a crash loop that happens to be up at the moment we look).
+restart_and_check() {
+    systemctl restart smartchime.service || return 1
+    local restarts
+    restarts=$(systemctl show -p NRestarts --value smartchime.service)
+    sleep "$HEALTH_WAIT"
+    systemctl is-active --quiet smartchime.service || return 1
+    [ "$(systemctl show -p NRestarts --value smartchime.service)" = "$restarts" ]
+}
+
+# Check out a tag, sync the venv and restart. Callers use it in a condition, so set -e is off here.
+install_tag() {
+    app_git checkout --quiet "$1" || return 1
+    sync_venv || return 1
+    restart_and_check
+}
+
+deploy() {
+    log "Fetching release tags"
+    app_git fetch --quiet --tags --force origin
+    local target previous
+    target=$(latest_tag) || { echo "ERROR: no vX.Y.Z release tags found in $APP_DIR" >&2; return 1; }
+    previous=$(current_tag)
+    log "Deploying $target (currently ${previous:-untagged})"
+    if ! systemctl is-enabled --quiet smartchime.service; then
+        app_git checkout --quiet "$target"
+        sync_venv
+        log "Smartchime $target is installed, but smartchime.service is not enabled, so it was not started."
+        log "Edit $APP_DIR/config.yaml, then: sudo systemctl enable --now smartchime.service"
+        return 0
+    fi
+    if [ "$target" = "$previous" ] && [ "$NEEDS_RESTART" = 0 ] && systemctl is-active --quiet smartchime.service; then
+        sync_venv
+        log "Smartchime is already running $target"
+        return 0
+    fi
+    install_tag "$target" && { log "Smartchime $target is running"; return 0; }
+
+    echo "ERROR: Smartchime $target failed: smartchime.service did not stay active for ${HEALTH_WAIT}s." >&2
+    if [ "$previous" = "$target" ]; then
+        echo "ERROR: $target was already deployed, so there is nothing to roll back to." \
+            "Check: journalctl -u smartchime.service" >&2
+        return 1
+    fi
+    if [ -z "$previous" ] || ! version_ge "$previous" "$FIRST_UV_RELEASE"; then
+        echo "ERROR: no release at or after $FIRST_UV_RELEASE to roll back to (was ${previous:-untagged});" \
+            "leaving $target in place. Check: journalctl -u smartchime.service" >&2
+        return 1
+    fi
+    if install_tag "$previous"; then
+        echo "ERROR: rolled back to $previous, which is running. Check: journalctl -u smartchime.service" >&2
+        return 1
+    fi
+    echo "ERROR: rollback to $previous also failed. Check: journalctl -u smartchime.service" >&2
+    return 2
+}
+
+package_version() {
+    # shellcheck disable=SC2016
+    dpkg-query -W -f='${Version}' "$1" 2>/dev/null || echo "not installed"
+}
+
+# Upgrade the held packages on purpose, then hold them again (also if the upgrade fails).
+os_upgrade() {
+    local before=() p i version changed=0
+    for p in "${HELD_PACKAGES[@]}"; do before+=("$(package_version "$p")"); done
+    log "Upgrading ${HELD_PACKAGES[*]}"
+    trap hold_os_packages EXIT
+    apt-mark unhold "${HELD_PACKAGES[@]}" >/dev/null
+    apt-get update -q
+    DEBIAN_FRONTEND=noninteractive apt-get install -y -q --only-upgrade \
+        -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold "${HELD_PACKAGES[@]}"
+    trap - EXIT
+    hold_os_packages
+    for i in "${!HELD_PACKAGES[@]}"; do
+        version=$(package_version "${HELD_PACKAGES[i]}")
+        if [ "$version" != "${before[i]}" ]; then
+            log "${HELD_PACKAGES[i]} ${before[i]} -> $version"
+            changed=1
+        fi
+    done
+    if [ "$changed" = 1 ] || [ -f "$REBOOT_REQUIRED" ]; then
+        log "Reboot required to apply the updates; this script does not reboot. When ready: sudo reboot"
+    else
+        log "No updates to the held packages. No reboot required."
+    fi
+}
+
+usage() {
+    cat <<EOF
+Usage: sudo smartchime-update [--os]
+
+  (no flag)  Converge the host, then deploy the latest vX.Y.Z release; roll back if it doesn't stay up.
+  --os       Converge the host, then upgrade the held kernel/firmware packages and report whether a
+             reboot is required. Never reboots and never deploys.
+EOF
+}
+
+converge() {
+    ensure_uv
+    migrate_pip_venv
+    hold_os_packages
+    # APT upgrades apply automatically (the held packages excepted); DietPi updates only notify.
+    set_dietpi_option CONFIG_CHECK_APT_UPDATES 2
+    set_dietpi_option CONFIG_CHECK_DIETPI_UPDATES 1
+    install_unit
+    install_command
+}
+
+main() {
+    local mode=deploy
+    case "${1:-}" in
+        "") ;;
+        --os) mode=os ;;
+        -h | --help) usage; return 0 ;;
+        *) usage >&2; return 64 ;;
+    esac
+    if [ "$(id -u)" -ne 0 ]; then
+        echo "ERROR: smartchime-update must run as root: sudo smartchime-update ${1:-}" >&2
+        return 1
+    fi
+    converge
+    if [ "$mode" = os ]; then
+        os_upgrade
+    else
+        deploy
+    fi
+}
+
+main "$@"; exit $?

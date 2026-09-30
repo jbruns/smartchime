@@ -73,7 +73,7 @@ AUTO_UNMASK_LOGIND=1
 # - Add as many APT package names as you wish, separated by space.
 # - They will be installed after dietpi-software options and before the script defined via AUTO_SETUP_CUSTOM_SCRIPT_EXEC (see below) is executed.
 # - E.g. the following (without the leading "#") will install the APT packages iotop, iptables and xz-utils:
-AUTO_SETUP_APT_INSTALLS=python3-pip python3-dev git python3.13-venv build-essential gcc libasound2-dev liblgpio-dev xserver-xorg-input-synaptics
+AUTO_SETUP_APT_INSTALLS=python3-dev git curl build-essential gcc libasound2-dev liblgpio-dev xserver-xorg-input-synaptics
 
 # Custom Script (pre-networking and pre-DietPi install)
 # - Allows you to automatically execute a custom script before network is up on first boot.
@@ -204,12 +204,14 @@ CONFIG_CHECK_CONNECTION_IPV6=2620:fe::fe
 CONFIG_CHECK_DNS_DOMAIN=dietpi.com
 
 # Daily check for DietPi updates: 0=disable | 1=enable
+# - Smartchime: notify only; smartchime-update keeps this at 1 (docs/adr/0003).
 # - Checks are done by downloading a file of only 7 bytes.
 CONFIG_CHECK_DIETPI_UPDATES=1
 
 # Daily check for APT package updates: 0=disable | 1=check only | 2=check and upgrade automatically
 # - Upgrade logs can be found at: /var/tmp/dietpi/logs/dietpi-update_apt.log
-CONFIG_CHECK_APT_UPDATES=1
+# - Smartchime: auto-apply; the kernel/firmware packages are held and move only with smartchime-update --os (docs/adr/0003).
+CONFIG_CHECK_APT_UPDATES=2
 
 # Network time sync: 0=disabled | 1=boot only | 2=boot + daily | 3=boot + hourly | 4=Daemon + Drift
 CONFIG_NTP_MODE=2
