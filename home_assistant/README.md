@@ -49,7 +49,7 @@ Copy [themes/smartchime_amoled.yaml](themes/smartchime_amoled.yaml) into your th
 
 ## Development
 
-The blueprints are tested in a real Home Assistant core, the one `pytest-homeassistant-custom-component` pins. That pin leads live Home Assistant ([ADR 0008 in ha-elevations](https://github.com/jbruns/ha-elevations/blob/main/docs/adr/0008-ha-test-pin-leads-live-ha.md)): Renovate opens an `ha-pin` PR when a new release arrives, and a green one means live HA is safe to upgrade to it. The OLED State and Doorbell Event tests check every payload against the schemas in [`mqtt-schema/`](../mqtt-schema/).
+The blueprints are tested in a real Home Assistant core, the one `pytest-homeassistant-custom-component` pins. That pin leads live Home Assistant ([ADR 0008 in ha-elevations](https://github.com/jbruns/ha-elevations/blob/main/docs/adr/0008-ha-test-pin-leads-live-ha.md)): Renovate opens an `ha-pin` PR when a new release arrives, and a green one means live HA is safe to upgrade to it. The OLED State and Doorbell Event tests check every payload against the schemas in [`mqtt-schema/`](../mqtt-schema/). The Host Status tests import the Pi application's `smartchime.host_status` (stdlib only, via `pythonpath`) and check that its discovery creates the Smartchime device and entities.
 
 CI runs these tests on every PR, and a weekly canary runs them against the newest stable Home Assistant. When the canary fails it keeps one open `ha-canary` issue, which closes itself when the canary is green again. Both use the shared workflow from ha-elevations ([docs/ci.md](https://github.com/jbruns/ha-elevations/blob/main/docs/ci.md)).
 

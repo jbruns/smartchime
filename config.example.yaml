@@ -34,6 +34,15 @@ mqtt:
     # Payload format: see docs/oled-v2-message-contract.schema.json
     oled_state: smartchime/display/oled
 
+    # Topic Smartchime publishes its Host Status to (retained, on connect and hourly)
+    # Payload: see mqtt-schema/host-status-contract.schema.json
+    # Default: smartchime/host/status
+    host_status: smartchime/host/status
+
+  # Home Assistant MQTT discovery prefix, for the Smartchime device and its Host Status entities
+  # Default: homeassistant
+  discovery_prefix: homeassistant
+
 # Audio System Configuration
 audio:
   # Directory containing WAV sound files for doorbell

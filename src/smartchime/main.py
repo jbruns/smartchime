@@ -2,6 +2,7 @@ import json
 import logging
 import time
 from datetime import datetime
+from pathlib import Path
 from threading import Lock
 
 import paho.mqtt.client as mqtt
@@ -20,8 +21,16 @@ except Exception as e:
 
 from smartchime.audio_manager import AudioManager  # noqa: E402
 from smartchime.encoder_manager import EncoderManager  # noqa: E402
+from smartchime.host_status import (  # noqa: E402
+    DEFAULT_DISCOVERY_PREFIX,
+    DEFAULT_STATUS_TOPIC,
+    discovery_config,
+    read_host_status,
+)
 from smartchime.oled_manager import OLEDManager  # noqa: E402
 from smartchime.shairport_metadata import ShairportMetadata  # noqa: E402
+
+HOST_STATUS_INTERVAL = 3600.0
 
 
 class SmartchimeSystem:
@@ -83,6 +92,10 @@ class SmartchimeSystem:
             self.mqtt_client.on_connect = self.on_connect
             self.mqtt_client.on_message = self.on_message
             self.mqtt_client.on_disconnect = self.on_disconnect
+
+            self.host_root = Path("/")
+            # Scheduled by the first publish on connect.
+            self._next_host_status_at = float("inf")
 
             self.available_sounds = self.audio.get_available_sounds()
             self.current_sound_index = 0
@@ -255,6 +268,8 @@ class SmartchimeSystem:
             client.subscribe(topics)
             self.oled.set_v2_state_transport_ready(True)
             self.logger.info(f"Subscribed to topics: {[t[0] for t in topics]}")
+            self.publish_host_discovery(client)
+            self.publish_host_status(client)
         else:
             self.oled.set_v2_state_transport_ready(False)
             self.logger.error(f"Failed to connect to MQTT broker: {reason_code}")
@@ -274,6 +289,41 @@ class SmartchimeSystem:
             self.logger.error(f"Unexpected MQTT disconnection: {reason_code}")
         else:
             self.logger.info("Disconnected from MQTT broker")
+
+    @property
+    def _host_status_topic(self):
+        return self.config["mqtt"]["topics"].get("host_status", DEFAULT_STATUS_TOPIC)
+
+    def publish_host_discovery(self, client):
+        """Publish the retained Home Assistant discovery for the Smartchime device and its Host Status entities."""
+        topic, payload = discovery_config(
+            self._host_status_topic,
+            smartchime_version=__version__,
+            discovery_prefix=self.config["mqtt"].get("discovery_prefix", DEFAULT_DISCOVERY_PREFIX),
+        )
+        try:
+            client.publish(topic, json.dumps(payload), qos=1, retain=True)
+            self.logger.info(f"Published Home Assistant discovery to {topic}")
+        except Exception as e:
+            self.logger.error(f"Failed to publish Home Assistant discovery: {e}", exc_info=True)
+
+    def publish_host_status(self, client):
+        """Publish the retained Host Status snapshot and schedule the next one an hour on."""
+        self._next_host_status_at = time.monotonic() + HOST_STATUS_INTERVAL
+        try:
+            status = read_host_status(self.host_root, smartchime_version=__version__)
+            client.publish(self._host_status_topic, json.dumps(status), qos=1, retain=True)
+            self.logger.info(
+                f"Published Host Status: DietPi {status['dietpi']['installed']} (latest {status['dietpi']['latest']}), "
+                f"{status['apt_updates']} APT updates, reboot required: {status['reboot_required']}"
+            )
+        except Exception as e:
+            self.logger.error(f"Failed to publish Host Status: {e}", exc_info=True)
+
+    def publish_host_status_if_due(self):
+        """Republish the Host Status once its hourly interval has passed."""
+        if time.monotonic() >= self._next_host_status_at:
+            self.publish_host_status(self.mqtt_client)
 
     def handle_event_message(self, topic, payload):
         """Handle incoming doorbell event messages from MQTT.
@@ -363,6 +413,7 @@ class SmartchimeSystem:
             self.logger.info("System running")
             while True:
                 self.oled.update_display()
+                self.publish_host_status_if_due()
                 time.sleep(0.0125)
 
         except KeyboardInterrupt:

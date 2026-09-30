@@ -235,6 +235,9 @@ The MQTT contract is in [`mqtt-schema/`](mqtt-schema/):
 |-------|---------|--------|
 | `smartchime/events/doorbell` | `{"active": bool, "timestamp": "ISO 8601"}`; an active event plays the Chime | [`event-state-doorbell-contract.schema.json`](mqtt-schema/event-state-doorbell-contract.schema.json) |
 | `smartchime/display/oled` (retained) | The complete OLED State (version 2) | [`oled-v2-message-contract.schema.json`](mqtt-schema/oled-v2-message-contract.schema.json) |
+| `smartchime/host/status` (retained, published by Smartchime) | The Host Status, on connect and hourly | [`host-status-contract.schema.json`](mqtt-schema/host-status-contract.schema.json) |
+
+Smartchime also publishes [MQTT discovery](https://www.home-assistant.io/integrations/mqtt/#device-discovery-payload) (`homeassistant/device/smartchime/config`, retained) for one **Smartchime** device, whose software version is the running release, with three diagnostic entities from the Host Status: a DietPi `update` entity, an APT updates sensor, and a Reboot required binary sensor. The counts come from DietPi's own update checks, which `smartchime-update` enables; Smartchime never runs `apt` itself.
 
 ## Acknowledgments
 

@@ -3,14 +3,16 @@
 import json
 import logging
 import time
+from pathlib import Path
 from threading import Lock
 from unittest.mock import MagicMock, patch
 
+import jsonschema
 import pytest
 
 
 @pytest.fixture()
-def system(sample_config):
+def system(sample_config, tmp_path):
     """Create a SmartchimeSystem without running __init__."""
     from smartchime.main import SmartchimeSystem
 
@@ -26,6 +28,8 @@ def system(sample_config):
     sys_obj._throttle_lock = Lock()
     sys_obj.available_sounds = ["doorbell.wav", "chime.wav"]
     sys_obj.current_sound_index = 0
+    sys_obj.host_root = tmp_path / "host"
+    sys_obj._next_host_status_at = float("inf")
     return sys_obj
 
 
@@ -167,6 +171,69 @@ class TestOnConnect:
         system.on_connect(client, None, MagicMock(), 1, None)
         client.subscribe.assert_not_called()
         system.oled.set_v2_state_transport_ready.assert_called_once_with(False)
+
+
+# ---------------------------------------------------------------------------
+# Host Status
+# ---------------------------------------------------------------------------
+
+
+def published(client):
+    """The messages published on client, as {topic: (payload, qos, retain)}."""
+    return {
+        c.args[0]: (json.loads(c.args[1]), c.kwargs.get("qos"), c.kwargs.get("retain"))
+        for c in client.publish.call_args_list
+    }
+
+
+class TestHostStatus:
+    def test_connecting_publishes_discovery_and_status_retained(self, system):
+        client = MagicMock()
+        system.on_connect(client, None, MagicMock(), 0, None)
+
+        messages = published(client)
+        discovery, qos, retain = messages["homeassistant/device/smartchime/config"]
+        assert (qos, retain) == (1, True)
+        assert discovery["state_topic"] == "smartchime/host/status"
+        status, qos, retain = messages["smartchime/host/status"]
+        assert (qos, retain) == (1, True)
+        contract = Path(__file__).resolve().parents[1] / "mqtt-schema" / "host-status-contract.schema.json"
+        jsonschema.validate(status, json.loads(contract.read_text()))
+
+    def test_topics_are_config_driven(self, system):
+        system.config["mqtt"]["topics"]["host_status"] = "chime/upkeep"
+        system.config["mqtt"]["discovery_prefix"] = "ha"
+        client = MagicMock()
+        system.on_connect(client, None, MagicMock(), 0, None)
+
+        assert set(published(client)) == {"ha/device/smartchime/config", "chime/upkeep"}
+
+    def test_a_failed_connection_publishes_nothing(self, system):
+        client = MagicMock()
+        system.on_connect(client, None, MagicMock(), 1, None)
+        client.publish.assert_not_called()
+
+    def test_nothing_is_republished_before_the_first_connect(self, system):
+        system.publish_host_status_if_due()
+        system.mqtt_client.publish.assert_not_called()
+
+    def test_status_is_republished_hourly(self, system):
+        with patch("smartchime.main.time.monotonic", return_value=1000.0):
+            system.on_connect(system.mqtt_client, None, MagicMock(), 0, None)
+        system.mqtt_client.publish.reset_mock()
+
+        with patch("smartchime.main.time.monotonic", return_value=1000.0 + 3599):
+            system.publish_host_status_if_due()
+        system.mqtt_client.publish.assert_not_called()
+
+        with patch("smartchime.main.time.monotonic", return_value=1000.0 + 3600):
+            system.publish_host_status_if_due()
+        assert set(published(system.mqtt_client)) == {"smartchime/host/status"}
+
+        system.mqtt_client.publish.reset_mock()
+        with patch("smartchime.main.time.monotonic", return_value=1000.0 + 3601):
+            system.publish_host_status_if_due()
+        system.mqtt_client.publish.assert_not_called()
 
 
 # ---------------------------------------------------------------------------

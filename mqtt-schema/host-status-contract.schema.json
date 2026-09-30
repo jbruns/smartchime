@@ -1,0 +1,46 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://github.com/jbruns/smartchime/docs/host-status-contract.schema.json",
+  "title": "Smartchime Host Status Contract",
+  "description": "Host Status published retained by Smartchime to Home Assistant via MQTT (topic: smartchime/host/status) on connect and hourly. Read from what DietPi's own update checks write; Smartchime never runs apt itself.",
+  "type": "object",
+  "required": ["smartchime_version", "dietpi", "apt_updates", "reboot_required", "timestamp"],
+  "additionalProperties": false,
+  "properties": {
+    "smartchime_version": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The running Smartchime release, from the git tag via hatch-vcs."
+    },
+    "dietpi": {
+      "type": "object",
+      "description": "The DietPi core version, shaped for a Home Assistant update entity.",
+      "required": ["installed", "latest"],
+      "additionalProperties": false,
+      "properties": {
+        "installed": {
+          "type": ["string", "null"],
+          "description": "Installed DietPi version (X.Y.Z) from /boot/dietpi/.version; null if unreadable."
+        },
+        "latest": {
+          "type": ["string", "null"],
+          "description": "The DietPi version available from /run/dietpi/.update_available, or the installed version when no update is available."
+        }
+      }
+    },
+    "apt_updates": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Pending APT updates from /run/dietpi/.apt_updates, including held kernel/firmware packages. 0 when the file is absent."
+    },
+    "reboot_required": {
+      "type": "boolean",
+      "description": "Whether /run/reboot-required exists."
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO 8601 timestamp, with offset, of when the status was read."
+    }
+  }
+}
