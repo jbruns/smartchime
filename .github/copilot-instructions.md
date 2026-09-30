@@ -9,7 +9,7 @@ Smartchime is a Python-based smart doorbell system for Raspberry Pi 4B. It integ
 The system follows a manager pattern with `SmartchimeSystem` (in `src/smartchime/main.py`) as the central orchestrator:
 
 - **`audio_manager.py`** — WAV playback via `aplay`, ALSA mixer volume/mute control
-- **`hdmi_manager.py`** — AMOLED display power and VLC-based RTSP/video playback via `vcgencmd`
+- **AMOLED Panel** — a Chromium kiosk showing the Home Assistant Panel dashboard. The Pi never blanks it; Home Assistant's Panel Mode owns sleep (`docs/adr/0001`)
 - **`oled_manager.py`** — SSD1305 128x32 OLED driven via `luma.oled` (SPI), with a two-layer composition (status bar + content area) and scrolling text
 - **`encoder_manager.py`** — Two rotary encoders via `gpiozero` (volume control and sound selection)
 - **`shairport_metadata.py`** — Reads AirPlay metadata from the shairport-sync named pipe in a background thread
