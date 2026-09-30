@@ -1,0 +1,33 @@
+# Smartchime AMOLED: pure black for Smartchime's Panel.
+# Black pixels are off on an AMOLED screen, so Sleep is dark and burn-in is limited.
+# Add to Home Assistant's themes folder (frontend: themes: !include_dir_merge_named themes).
+
+smartchime_amoled:
+  # Backgrounds
+  primary-background-color: "#000000"
+  secondary-background-color: "#000000"
+  lovelace-background: "#000000"
+  card-background-color: "#000000"
+  ha-card-background: "#000000"
+  ha-card-border-width: "0px"
+  ha-card-box-shadow: "none"
+
+  # Text
+  primary-text-color: "#FFFFFF"
+  secondary-text-color: "#B0B0B0"
+  disabled-text-color: "#555555"
+  text-primary-color: "#FFFFFF"
+
+  # Accent and state
+  primary-color: "#4FC3F7"
+  accent-color: "#4FC3F7"
+  state-icon-color: "#9E9E9E"
+  state-active-color: "#4FC3F7"
+  state-icon-active-color: "#4FC3F7"
+
+  # Header, dividers and the rest of the frontend
+  app-header-background-color: "#000000"
+  app-header-text-color: "#FFFFFF"
+  sidebar-background-color: "#000000"
+  divider-color: "rgba(255,255,255,0.08)"
+  markdown-code-background-color: "#111111"
