@@ -44,6 +44,10 @@ _Avoid_: clear, silence
 The doors currently open, shown live on Idle; never a takeover and never timed.
 _Avoid_: door ajar, door alert, door open too long
 
+**Host Status**:
+A snapshot of the chime's own upkeep: which Smartchime release it runs, whether operating system updates are waiting, and whether it needs a restart.
+_Avoid_: health, heartbeat, system info
+
 ### Schedule
 
 **Display Schedule**:
