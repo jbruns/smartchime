@@ -49,7 +49,9 @@ Copy [themes/smartchime_amoled.yaml](themes/smartchime_amoled.yaml) into your th
 
 ## Development
 
-The blueprints are tested in a real Home Assistant core, pinned to the release running live. The OLED State and Doorbell Event tests check every payload against the schemas in [`mqtt-schema/`](../mqtt-schema/).
+The blueprints are tested in a real Home Assistant core, the one `pytest-homeassistant-custom-component` pins. That pin leads live Home Assistant ([ADR 0008 in ha-elevations](https://github.com/jbruns/ha-elevations/blob/main/docs/adr/0008-ha-test-pin-leads-live-ha.md)): Renovate opens an `ha-pin` PR when a new release arrives, and a green one means live HA is safe to upgrade to it. The OLED State and Doorbell Event tests check every payload against the schemas in [`mqtt-schema/`](../mqtt-schema/).
+
+CI runs these tests on every PR, and a weekly canary runs them against the newest stable Home Assistant. When the canary fails it keeps one open `ha-canary` issue, which closes itself when the canary is green again. Both use the shared workflow from ha-elevations ([docs/ci.md](https://github.com/jbruns/ha-elevations/blob/main/docs/ci.md)).
 
 ```bash
 cd home_assistant
@@ -57,4 +59,4 @@ uv run pytest
 uvx ruff check . && uvx ruff format --check .
 ```
 
-The `testing/` harness is copied from [jbruns/ha-elevations](https://github.com/jbruns/ha-elevations) rather than shared (ADR 0002).
+The `testing/` harness is copied from [jbruns/ha-elevations](https://github.com/jbruns/ha-elevations) rather than shared (ADR 0002). ADR 0002 covers what Smartchime puts into Home Assistant, not how it's tested, so the CI workflow and Renovate preset are shared.

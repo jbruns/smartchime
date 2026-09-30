@@ -9,7 +9,9 @@ dependencies = []
 
 [dependency-groups]
 dev = [
-  # Pinned to the Home Assistant release running live, so tests exercise the same core.
+  # Leads live Home Assistant: Renovate bumps it (the ha-pin group), and a green bump means
+  # live HA is safe to upgrade to that release (ADR 0008 in jbruns/ha-elevations).
+  # Must pin a stable HA, not a beta.
   "pytest-homeassistant-custom-component==0.13.357",
   "jsonschema~=4.25",
 ]

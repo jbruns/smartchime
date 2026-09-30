@@ -40,3 +40,10 @@ jobs:
         with:
           name: coverage-report
           path: coverage.xml
+
+  # The Home Assistant tests, on the pinned phcc. See docs/ci.md in jbruns/ha-elevations.
+  ha-tests:
+    name: HA tests
+    uses: jbruns/ha-elevations/.github/workflows/ha-tests.yml@main
+    with:
+      working-directory: home_assistant

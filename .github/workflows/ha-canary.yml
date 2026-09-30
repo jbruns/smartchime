@@ -1,0 +1,20 @@
+# The Home Assistant tests against the newest stable HA. See docs/ci.md in jbruns/ha-elevations.
+name: HA canary
+
+on:
+  schedule:
+    # Mondays, after Renovate's weekly run (before 6am America/Los_Angeles).
+    - cron: "0 15 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  canary:
+    name: HA canary
+    uses: jbruns/ha-elevations/.github/workflows/ha-tests.yml@main
+    with:
+      mode: canary
+      working-directory: home_assistant
