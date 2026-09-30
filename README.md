@@ -195,31 +195,14 @@ pip install -e ".[dev,hw]"
 
 ## Integrating with Home Assistant
 
-See the `examples/` directory for starter automations, which will publish the right MQTT events for Smartchime to react to.
+Home Assistant drives Smartchime over MQTT. [`home_assistant/`](home_assistant/README.md) has everything it needs: blueprints for the Doorbell Event, the OLED State and the Panel Mode, the Panel dashboard for the AMOLED screen, and its theme.
 
-Note that you can (and probably should) control how long doorbell events are treated as 'active' in Home Assistant, based on your specific needs. This means that, for example, if you only want the doorbell to be "rung" a maximum of every 10 seconds, instruct Home Assistant to wait until your doorbell sensor is out of the "ring" state for 10 seconds before setting Smartchime's doorbell event to 'false'.
+The MQTT contract is in [`mqtt-schema/`](mqtt-schema/):
 
-For the doorbell event, a JSON payload is expected:
-
-```json
-{
-  "active": false,
-  "timestamp": "{{ now().isoformat() }}"
-}
-```
-
-| Parameter | Type | Purpose |
-|-----------|------|---------|
-| active    | bool | Whether the doorbell event should be treated as 'active'. |
-| timestamp | timedate | Generally, should be the template value `{{ now().isoformat() }}`, meaning the current time in ISO format. |
-
-For the OLED message, either a raw non-JSON payload can be sent, or if you prefer:
-
-```json
-{
-  "text": "hello world"
-}
-```
+| Topic | Payload | Schema |
+|-------|---------|--------|
+| `smartchime/events/doorbell` | `{"active": bool, "timestamp": "ISO 8601"}`; an active event plays the Chime | [`event-state-doorbell-contract.schema.json`](mqtt-schema/event-state-doorbell-contract.schema.json) |
+| `smartchime/display/oled` (retained) | The complete OLED State (version 2) | [`oled-v2-message-contract.schema.json`](mqtt-schema/oled-v2-message-contract.schema.json) |
 
 ## Acknowledgments
 

@@ -23,7 +23,8 @@ All modules live in `src/smartchime/`. Configuration is loaded from `config.yaml
 - **`luma_patch` import order matters.** `main.py` imports `luma_patch` before other smartchime modules to patch luma's `ImageComposition.refresh` for modern Pillow.
 - **OLED display uses SSD1305**, but is initialized as `ssd1306` with manual register fixups (`0xDA, 0x12` and column offset adjustments).
 - **Throttle system** — Control inputs are throttled via a cycle-counting mechanism in the main loop (each cycle ≈ 12.5ms via `time.sleep(0.0125)`). Throttle periods are configured per control type.
-- **MQTT payloads** — Doorbell/motion events expect `{"active": bool, "timestamp": "ISO8601", "video_url": "url"}`. OLED messages accept `{"text": "string"}` or plain strings.
+- **MQTT payloads** — Doorbell events expect `{"active": bool, "timestamp": "ISO8601"}`. The OLED takes a retained v2 OLED State snapshot. Both contracts are JSON schemas in `mqtt-schema/`.
+- **Home Assistant side** — `home_assistant/` holds the blueprints, Panel dashboard and theme, with its own uv project and tests run in a real Home Assistant core: `cd home_assistant && uv run pytest`.
 
 ## Code Quality
 

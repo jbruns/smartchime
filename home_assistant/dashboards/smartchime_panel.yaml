@@ -1,0 +1,219 @@
+# Smartchime Panel: the dashboard on Smartchime's AMOLED screen (1920x1080, landscape).
+#
+# It shows whichever Panel Mode the "Smartchime: Panel Mode" automation has
+# selected. Sleep shows nothing: the smartchime_amoled theme makes it black.
+#
+# Before pasting this into a new dashboard's raw configuration editor, replace
+# each entity below with your own (find and replace):
+#
+#   Entity                                   What it is
+#   input_select.smartchime_panel_mode       Panel Mode helper (sleep, idle, visitor, person, hazard, controls)
+#   binary_sensor.smartchime_hazard          Hazard group helper (smoke, CO and leak sensors)
+#   binary_sensor.smartchime_open_doors      Open Doors group helper (door and window contact sensors)
+#   camera.front_door                        Front door camera (Visitor and Person)
+#   lock.front_door                          Front door lock
+#   lock.side_door                           Another lock (Controls)
+#   light.porch                              Porch light (Visitor, Person and Controls)
+#   light.entry                              Another light (Controls)
+#   cover.garage_door                        Garage door (Controls)
+#   weather.home                             Weather, with a daily forecast
+#   sensor.outdoor_aqi                       Outdoor air quality index
+#
+# Custom cards: Advanced Camera Card and card-mod, both from HACS.
+# See home_assistant/README.md in jbruns/smartchime.
+
+title: Smartchime
+views:
+  - title: Panel
+    path: panel
+    type: panel
+    theme: smartchime_amoled
+    cards:
+      - type: vertical-stack
+        cards:
+          # ── Idle: the time, the doors and the weather ──────────────────
+          - type: conditional
+            conditions:
+              - condition: state
+                entity: input_select.smartchime_panel_mode
+                state: idle
+            card:
+              type: vertical-stack
+              cards:
+                - type: horizontal-stack
+                  cards:
+                    - type: vertical-stack
+                      cards:
+                        - type: clock
+                          clock_size: large
+                          time_format: "12"
+                          show_seconds: false
+                        - type: markdown
+                          text_only: true
+                          content: >-
+                            {% set hazards = expand('binary_sensor.smartchime_hazard')
+                              | selectattr('state', 'eq', 'on') | map(attribute='name') | list %}
+                            {% set open = expand('binary_sensor.smartchime_open_doors')
+                              | selectattr('state', 'eq', 'on') | map(attribute='name') | list %}
+                            {% if hazards %}<ha-alert alert-type="error">{{ hazards | join(', ') }}</ha-alert>
+                            {% endif %}{% if open %}<ha-alert alert-type="warning">Open: {{ open | join(', ') }}</ha-alert>
+                            {% elif not hazards %}<ha-alert alert-type="success">All doors closed</ha-alert>{% endif %}
+                        - type: tile
+                          entity: lock.front_door
+                          vertical: false
+                          tap_action:
+                            action: toggle
+                    - type: vertical-stack
+                      cards:
+                        - type: weather-forecast
+                          entity: weather.home
+                          show_current: true
+                          show_forecast: true
+                          forecast_type: daily
+                        - type: tile
+                          entity: sensor.outdoor_aqi
+                          name: Air quality
+                          icon: mdi:weather-hazy
+                - type: button
+                  name: Controls
+                  icon: mdi:tune-variant
+                  show_state: false
+                  tap_action:
+                    action: perform-action
+                    perform_action: input_select.select_option
+                    target:
+                      entity_id: input_select.smartchime_panel_mode
+                    data:
+                      option: controls
+
+          # ── Visitor and Person: the front door camera ──────────────────
+          - type: conditional
+            conditions:
+              - condition: or
+                conditions:
+                  - condition: state
+                    entity: input_select.smartchime_panel_mode
+                    state: visitor
+                  - condition: state
+                    entity: input_select.smartchime_panel_mode
+                    state: person
+            card:
+              type: horizontal-stack
+              cards:
+                - type: custom:advanced-camera-card
+                  cameras:
+                    - camera_entity: camera.front_door
+                  menu:
+                    style: none
+                - type: vertical-stack
+                  cards:
+                    - type: markdown
+                      text_only: true
+                      content: >-
+                        {% if is_state('input_select.smartchime_panel_mode', 'visitor') %}
+                        # Someone's at the door
+                        {% else %}
+                        # Someone's outside
+                        {% endif %}
+                    - type: tile
+                      entity: lock.front_door
+                      tap_action:
+                        action: toggle
+                    - type: tile
+                      entity: light.porch
+                      tap_action:
+                        action: toggle
+                    - type: button
+                      name: Dismiss
+                      icon: mdi:close
+                      show_state: false
+                      tap_action:
+                        action: perform-action
+                        perform_action: input_select.select_option
+                        target:
+                          entity_id: input_select.smartchime_panel_mode
+                        data:
+                          option: idle
+
+          # ── Hazard: takes over until it clears or is acknowledged ──────
+          - type: conditional
+            conditions:
+              - condition: state
+                entity: input_select.smartchime_panel_mode
+                state: hazard
+            card:
+              type: vertical-stack
+              cards:
+                - type: markdown
+                  content: >-
+                    # Hazard
+
+                    {% for name in expand('binary_sensor.smartchime_hazard')
+                      | selectattr('state', 'eq', 'on') | map(attribute='name') %}
+                    ## {{ name }}
+                    {% endfor %}
+                  card_mod:
+                    style: |
+                      ha-card {
+                        background: #8b0000;
+                        color: #ffffff;
+                        text-align: center;
+                        min-height: 70vh;
+                        font-size: 2em;
+                      }
+                - type: button
+                  name: Acknowledge
+                  icon: mdi:check
+                  show_state: false
+                  tap_action:
+                    action: perform-action
+                    perform_action: input_select.select_option
+                    target:
+                      entity_id: input_select.smartchime_panel_mode
+                    data:
+                      option: idle
+
+          # ── Controls: locks, lights and the garage ─────────────────────
+          - type: conditional
+            conditions:
+              - condition: state
+                entity: input_select.smartchime_panel_mode
+                state: controls
+            card:
+              type: vertical-stack
+              cards:
+                - type: grid
+                  columns: 3
+                  square: false
+                  cards:
+                    - type: tile
+                      entity: lock.front_door
+                      features:
+                        - type: lock-commands
+                    - type: tile
+                      entity: lock.side_door
+                      features:
+                        - type: lock-commands
+                    - type: tile
+                      entity: cover.garage_door
+                      features:
+                        - type: cover-open-close
+                    - type: tile
+                      entity: light.porch
+                      tap_action:
+                        action: toggle
+                    - type: tile
+                      entity: light.entry
+                      tap_action:
+                        action: toggle
+                - type: button
+                  name: Back
+                  icon: mdi:arrow-left
+                  show_state: false
+                  tap_action:
+                    action: perform-action
+                    perform_action: input_select.select_option
+                    target:
+                      entity_id: input_select.smartchime_panel_mode
+                    data:
+                      option: idle

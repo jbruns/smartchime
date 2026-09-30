@@ -1,0 +1,276 @@
+blueprint:
+  name: "Smartchime: Panel Mode"
+  description: >-
+    Chooses what Smartchime's Panel (the AMOLED dashboard) shows: Sleep, Idle,
+    Visitor, Person, Hazard or Controls. It sets a Panel Mode dropdown that
+    the dashboard follows, and owns the Panel's timer.
+    A Doorbell Press shows Visitor, a person at the door shows Person, and a
+    Hazard takes over until it clears or is acknowledged. When their time is up
+    they return to Idle, or to Sleep during Night. Idle sleeps when idle for
+    too long or when Night starts, and wakes on a touch or when Morning starts.
+    See home_assistant/README.md in jbruns/smartchime.
+  domain: automation
+  source_url: https://github.com/jbruns/smartchime/blob/main/home_assistant/blueprints/automation/smartchime_panel_mode.yaml
+  homeassistant:
+    min_version: "2025.4.0"
+  input:
+    helpers:
+      name: Helpers
+      input:
+        panel_mode:
+          name: Panel Mode
+          description: >-
+            A dropdown helper with the options sleep, idle, visitor, person,
+            hazard and controls. The dashboard shows the one selected.
+          selector:
+            entity:
+              filter:
+                domain: input_select
+        panel_timeout:
+          name: Panel timer
+          description: A timer helper, used only by this automation.
+          selector:
+            entity:
+              filter:
+                domain: timer
+    sources:
+      name: What wakes the Panel
+      input:
+        doorbell:
+          name: Doorbell
+          description: The binary sensor that is on while the doorbell button is pressed.
+          selector:
+            entity:
+              filter:
+                domain: binary_sensor
+        person:
+          name: Person at the door
+          description: The binary sensor that is on while a person is at the front door.
+          selector:
+            entity:
+              filter:
+                domain: binary_sensor
+        hazard:
+          name: Hazard
+          description: >-
+            A binary sensor that is on while any hazard sensor is, such as a
+            group of smoke, carbon monoxide and leak sensors.
+          selector:
+            entity:
+              filter:
+                domain: binary_sensor
+        touch:
+          name: Touch
+          description: >-
+            The browser_mod activity sensor of the Panel's browser, on while
+            someone is using the screen. Touching wakes the Panel from Sleep
+            and restarts the current mode's time. Leave empty for no touch.
+          default: []
+          selector:
+            entity:
+              multiple: true
+              filter:
+                domain: binary_sensor
+    schedule:
+      name: Display Schedule
+      input:
+        morning:
+          name: Morning starts
+          description: A time-only input_datetime helper. The Panel wakes from Sleep.
+          selector:
+            entity:
+              filter:
+                domain: input_datetime
+        night:
+          name: Night starts
+          description: A time-only input_datetime helper. An Idle Panel sleeps.
+          selector:
+            entity:
+              filter:
+                domain: input_datetime
+    durations:
+      name: How long each mode lasts
+      input:
+        idle_duration:
+          name: Idle
+          description: How long Idle lasts without a touch before the Panel sleeps.
+          default: {minutes: 5}
+          selector:
+            duration:
+        visitor_duration:
+          name: Visitor
+          default: {minutes: 2}
+          selector:
+            duration:
+        person_duration:
+          name: Person
+          description: The longest Person lasts, even while the person stays.
+          default: {seconds: 45}
+          selector:
+            duration:
+        person_linger:
+          name: Person linger
+          description: How long Person lasts once the person has gone.
+          default: {seconds: 15}
+          selector:
+            duration:
+        controls_duration:
+          name: Controls
+          default: {minutes: 2}
+          selector:
+            duration:
+
+# One run at a time, in order: each run reads the Panel Mode the last one set.
+mode: queued
+max: 20
+
+triggers:
+  - trigger: state
+    entity_id: !input panel_mode
+    id: entered
+  - trigger: homeassistant
+    event: start
+    id: start
+  - trigger: state
+    entity_id: !input doorbell
+    from: "off"
+    to: "on"
+    id: doorbell
+  - trigger: state
+    entity_id: !input person
+    from: "off"
+    to: "on"
+    id: person
+  - trigger: state
+    entity_id: !input person
+    from: "on"
+    to: "off"
+    id: person_gone
+  # From any state, so a Hazard present when the sensor comes back still shows.
+  - trigger: state
+    entity_id: !input hazard
+    to: "on"
+    id: hazard
+  - trigger: state
+    entity_id: !input hazard
+    from: "on"
+    to: "off"
+    id: hazard_cleared
+  - trigger: event
+    event_type: timer.finished
+    event_data:
+      entity_id: !input panel_timeout
+    id: timeout
+  - trigger: time
+    at: !input night
+    id: night
+  - trigger: time
+    at: !input morning
+    id: morning
+  - trigger: state
+    entity_id: !input touch
+    from: "off"
+    to: "on"
+    id: touch
+
+variables:
+  panel_mode: !input panel_mode
+  panel_timeout: !input panel_timeout
+  hazard: !input hazard
+  morning: !input morning
+  night: !input night
+  idle_duration: !input idle_duration
+  visitor_duration: !input visitor_duration
+  person_duration: !input person_duration
+  person_linger: !input person_linger
+  controls_duration: !input controls_duration
+  mode: "{{ states(panel_mode) }}"
+  is_night: >-
+    {% set start = states(night) %}
+    {% set end = states(morning) %}
+    {% set now_time = now().strftime('%H:%M:%S') %}
+    {% if not (start | regex_match('^[0-9]{2}:[0-9]{2}:[0-9]{2}$') and end | regex_match('^[0-9]{2}:[0-9]{2}:[0-9]{2}$')) %}false
+    {% elif start <= end %}{{ start <= now_time < end }}
+    {% else %}{{ now_time >= start or now_time < end }}{% endif %}
+  resume: "{{ 'sleep' if is_night else 'idle' }}"
+  # The mode this trigger moves the Panel to, or none to leave it.
+  target: >-
+    {% set t = trigger.id %}
+    {% if t == 'start' %}
+      {{ mode if mode == 'hazard' and is_state(hazard, 'on') else resume }}
+    {% elif t == 'doorbell' %}
+      {{ 'visitor' if mode != 'hazard' else none }}
+    {% elif t == 'person' %}
+      {{ 'person' if mode in ['sleep', 'idle', 'person'] else none }}
+    {% elif t == 'hazard' %}hazard
+    {% elif t == 'hazard_cleared' %}
+      {{ resume if mode == 'hazard' else none }}
+    {% elif t == 'timeout' %}
+      {% if mode in ['visitor', 'person', 'controls'] %}{{ resume }}
+      {% elif mode == 'idle' %}sleep
+      {% else %}{{ none }}{% endif %}
+    {% elif t == 'night' %}
+      {{ 'sleep' if mode == 'idle' else none }}
+    {% elif t == 'morning' %}
+      {{ 'idle' if mode == 'sleep' else none }}
+    {% elif t == 'touch' %}
+      {% if mode == 'sleep' %}idle
+      {% elif mode in ['idle', 'visitor', 'person', 'controls'] %}{{ mode }}
+      {% else %}{{ none }}{% endif %}
+    {% else %}{{ none }}{% endif %}
+  durations: >-
+    {% set ns = namespace(seconds={}) %}
+    {% for name, d in [('idle', idle_duration), ('visitor', visitor_duration),
+                       ('person', person_duration), ('controls', controls_duration),
+                       ('linger', person_linger)] %}
+      {% set s = (d.get('days', 0) * 86400 + d.get('hours', 0) * 3600
+                  + d.get('minutes', 0) * 60 + d.get('seconds', 0)) | int %}
+      {% set ns.seconds = dict(ns.seconds, **{name: s}) %}
+    {% endfor %}
+    {{ ns.seconds }}
+
+actions:
+  - choose:
+      # The timer is set here, whenever a mode is entered, and nowhere else
+      # except when a person leaves or the same mode is chosen again.
+      - conditions: "{{ trigger.id == 'entered' }}"
+        sequence:
+          - if: "{{ trigger.to_state.state in durations }}"
+            then:
+              - action: timer.start
+                target:
+                  entity_id: "{{ panel_timeout }}"
+                data:
+                  duration: "{{ durations[trigger.to_state.state] }}"
+            else:
+              - action: timer.cancel
+                target:
+                  entity_id: "{{ panel_timeout }}"
+      - conditions: "{{ trigger.id == 'person_gone' and mode == 'person' }}"
+        sequence:
+          - action: timer.start
+            target:
+              entity_id: "{{ panel_timeout }}"
+            data:
+              duration: "{{ durations.linger }}"
+      - conditions: "{{ target not in [none, '', 'None'] and target != mode }}"
+        sequence:
+          - action: input_select.select_option
+            target:
+              entity_id: "{{ panel_mode }}"
+            data:
+              option: "{{ target }}"
+      # The same mode again: selecting it wouldn't change state, so restart its time here.
+      - conditions: "{{ target not in [none, '', 'None'] and target == mode }}"
+        sequence:
+          - if: "{{ target in durations }}"
+            then:
+              - action: timer.start
+                target:
+                  entity_id: "{{ panel_timeout }}"
+                data:
+                  duration: "{{ durations[target] }}"
+            else:
+              - action: timer.cancel
+                target:
+                  entity_id: "{{ panel_timeout }}"

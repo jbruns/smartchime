@@ -1,0 +1,221 @@
+blueprint:
+  name: "Smartchime: OLED State"
+  description: >-
+    Publishes the OLED State, a complete snapshot of what Smartchime's status
+    OLED shows, whenever anything on it changes and every 5 minutes. The
+    Display Schedule's Periods set the OLED contrast, and Night turns it off.
+    The payload follows mqtt-schema/oled-v2-message-contract.schema.json.
+    See home_assistant/README.md in jbruns/smartchime.
+  domain: automation
+  source_url: https://github.com/jbruns/smartchime/blob/main/home_assistant/blueprints/automation/smartchime_oled_state.yaml
+  homeassistant:
+    min_version: "2025.4.0"
+  input:
+    sources:
+      name: What the OLED shows
+      input:
+        doorbell:
+          name: Doorbell
+          description: >-
+            The binary sensor that is on while the doorbell button is pressed.
+            A Doorbell Press replaces the rotating items with a message for 2 minutes.
+          selector:
+            entity:
+              filter:
+                domain: binary_sensor
+        person:
+          name: Person at the door
+          description: >-
+            The binary sensor that is on while a person is at the front door,
+            shown in the status bar with how long ago it last changed.
+          selector:
+            entity:
+              filter:
+                domain: binary_sensor
+        lock:
+          name: Front door lock
+          description: Shown as a rotating item, such as "Front Door Locked".
+          selector:
+            entity:
+              filter:
+                domain: lock
+        weather:
+          name: Weather
+          description: Its current temperature and condition are shown as a rotating item.
+          selector:
+            entity:
+              filter:
+                domain: weather
+    schedule:
+      name: Display Schedule
+      input:
+        morning:
+          name: Morning starts
+          description: A time-only input_datetime helper.
+          selector:
+            entity:
+              filter:
+                domain: input_datetime
+        day:
+          name: Day starts
+          description: A time-only input_datetime helper.
+          selector:
+            entity:
+              filter:
+                domain: input_datetime
+        evening:
+          name: Evening starts
+          description: A time-only input_datetime helper.
+          selector:
+            entity:
+              filter:
+                domain: input_datetime
+        night:
+          name: Night starts
+          description: A time-only input_datetime helper. The OLED is off during Night.
+          selector:
+            entity:
+              filter:
+                domain: input_datetime
+        contrast_morning:
+          name: Morning contrast
+          default: 0.15
+          selector:
+            number:
+              min: 0
+              max: 1
+              step: 0.05
+              mode: slider
+        contrast_day:
+          name: Day contrast
+          default: 0.5
+          selector:
+            number:
+              min: 0
+              max: 1
+              step: 0.05
+              mode: slider
+        contrast_evening:
+          name: Evening contrast
+          default: 0.2
+          selector:
+            number:
+              min: 0
+              max: 1
+              step: 0.05
+              mode: slider
+    topic:
+      name: Topic
+      description: The MQTT topic Smartchime subscribes to for the OLED State.
+      default: smartchime/display/oled
+      selector:
+        text:
+
+# Each run publishes the whole snapshot, so a burst of changes only needs the
+# last one; publishing each in turn keeps the OLED no more than a moment behind.
+mode: queued
+max: 10
+max_exceeded: silent
+
+triggers:
+  - trigger: homeassistant
+    event: start
+  - trigger: time_pattern
+    minutes: /5
+  - trigger: state
+    entity_id:
+      - !input doorbell
+      - !input person
+      - !input lock
+      - !input weather
+  - trigger: state
+    entity_id: !input weather
+    attribute: temperature
+  - trigger: time
+    at:
+      - !input morning
+      - !input day
+      - !input evening
+      - !input night
+  - trigger: state
+    entity_id:
+      - !input morning
+      - !input day
+      - !input evening
+      - !input night
+
+variables:
+  topic: !input topic
+  doorbell: !input doorbell
+  person: !input person
+  lock: !input lock
+  weather: !input weather
+  morning: !input morning
+  day: !input day
+  evening: !input evening
+  night: !input night
+  contrast_morning: !input contrast_morning
+  contrast_day: !input contrast_day
+  contrast_evening: !input contrast_evening
+  period: >-
+    {% set ns = namespace(times={}) %}
+    {% for name, helper, fallback in [
+         ('morning', morning, '06:00:00'), ('day', day, '08:00:00'),
+         ('evening', evening, '20:00:00'), ('night', night, '23:00:00')] %}
+      {% set value = states(helper) %}
+      {% set ns.times = dict(ns.times, **{name: value if value | regex_match('^[0-9]{2}:[0-9]{2}:[0-9]{2}$') else fallback}) %}
+    {% endfor %}
+    {% set t = ns.times %}
+    {% set now_time = now().strftime('%H:%M:%S') %}
+    {% if now_time >= t.night or now_time < t.morning %}night
+    {% elif now_time >= t.evening %}evening
+    {% elif now_time >= t.day %}day
+    {% else %}morning{% endif %}
+  conditions: >-
+    {{ {'clear-night': 'Clear', 'cloudy': 'Cloudy', 'exceptional': 'Exceptional',
+        'fog': 'Fog', 'hail': 'Hail', 'lightning': 'Lightning',
+        'lightning-rainy': 'Thunderstorms', 'partlycloudy': 'Partly cloudy',
+        'pouring': 'Pouring', 'rainy': 'Rain', 'snowy': 'Snow',
+        'snowy-rainy': 'Sleet', 'sunny': 'Sunny', 'windy': 'Windy',
+        'windy-variant': 'Windy'} }}
+  items: >-
+    {% set ns = namespace(items=[]) %}
+    {% if states(lock) in ['locked', 'unlocked'] %}
+      {% set name = state_attr(lock, 'friendly_name') or 'Door' %}
+      {% set text = name ~ (' Locked' if is_state(lock, 'locked') else ' Unlocked!') %}
+      {% set ns.items = ns.items + [{'key': 'security', 'text': text, 'priority': 90}] %}
+    {% endif %}
+    {% set temperature = state_attr(weather, 'temperature') %}
+    {% if states(weather) not in ['unknown', 'unavailable'] and temperature is number %}
+      {% set condition = conditions.get(states(weather), states(weather) | replace('-', ' ') | capitalize) %}
+      {% set text = (temperature | round(0) | int) ~ '° ' ~ condition %}
+      {% set ns.items = ns.items + [{'key': 'weather', 'text': text, 'priority': 70}] %}
+    {% endif %}
+    {{ ns.items }}
+  payload: >-
+    {% set motion = {'active': is_state(person, 'on')} %}
+    {% if states(person) in ['on', 'off'] %}
+      {% set motion = dict(motion, timestamp=states[person].last_changed.isoformat()) %}
+    {% endif %}
+    {% set pressed = is_state(doorbell, 'on') %}
+    {{ {
+      'version': 2,
+      'active': period != 'night',
+      'contrast': {'morning': contrast_morning, 'day': contrast_day,
+                   'evening': contrast_evening}.get(period, 0),
+      'line1': {'mode': 'clock, motion', 'motion': motion},
+      'line2': {'mode': 'rotate', 'rotate_seconds': 10, 'items': items},
+      'override': {
+        'active': pressed,
+        'text': "Someone's at the door!" if pressed else '',
+        'expires_at': (now() + timedelta(minutes=2)).isoformat() if pressed else none,
+      },
+    } }}
+
+actions:
+  - action: mqtt.publish
+    data:
+      topic: "{{ topic }}"
+      qos: 1
+      retain: true
+      payload: "{{ payload | to_json }}"

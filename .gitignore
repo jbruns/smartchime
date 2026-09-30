@@ -7,3 +7,6 @@ build/
 .ruff_cache/
 .pytest_cache/
 .coverage
+# Local worktrees and secrets.
+.worktrees/
+.env

@@ -1,0 +1,52 @@
+blueprint:
+  name: "Smartchime: Doorbell Event"
+  description: >-
+    Sends Smartchime a Doorbell Event over MQTT when a Doorbell Press starts
+    and when it ends. An active Doorbell Event plays the Chime.
+    The payload follows mqtt-schema/event-state-doorbell-contract.schema.json.
+    See home_assistant/README.md in jbruns/smartchime.
+  domain: automation
+  source_url: https://github.com/jbruns/smartchime/blob/main/home_assistant/blueprints/automation/smartchime_doorbell_event.yaml
+  homeassistant:
+    min_version: "2025.4.0"
+  input:
+    doorbell:
+      name: Doorbell
+      description: The binary sensor that is on while the doorbell button is pressed.
+      selector:
+        entity:
+          filter:
+            domain: binary_sensor
+    topic:
+      name: Topic
+      description: The MQTT topic Smartchime subscribes to for Doorbell Events.
+      default: smartchime/events/doorbell
+      selector:
+        text:
+
+# Every press and release is sent, in order.
+mode: queued
+max: 10
+
+triggers:
+  # Only real presses: a sensor returning from unavailable is not a Doorbell Press.
+  - trigger: state
+    entity_id: !input doorbell
+    from: "off"
+    to: "on"
+  - trigger: state
+    entity_id: !input doorbell
+    from: "on"
+    to: "off"
+
+variables:
+  topic: !input topic
+
+actions:
+  - action: mqtt.publish
+    data:
+      topic: "{{ topic }}"
+      qos: 1
+      retain: false
+      payload: >-
+        {{ {'active': trigger.to_state.state == 'on', 'timestamp': now().isoformat()} | to_json }}
