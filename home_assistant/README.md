@@ -33,7 +33,7 @@ Change the Display Schedule whenever you like; both blueprints follow it.
 
 Use the import buttons above, then **Create automation** from each and choose your entities and helpers. Every input is described in the editor.
 
-For Panel Mode's **Touch** input, register the Panel's browser in browser_mod (**Browser Mod** in the sidebar, then **Register**) and choose its activity binary sensor, such as `binary_sensor.<browser id>_browser`. Without it the Panel still wakes for the doorbell, a person, a Hazard and Morning, but not for a touch.
+Leave Panel Mode's **Touch** input empty for now; its sensor only exists once the Panel's browser is registered, and you set it in step 4.
 
 ## 3. Add the theme
 
@@ -44,7 +44,8 @@ Copy [themes/smartchime_amoled.yaml](themes/smartchime_amoled.yaml) into your th
 1. Copy [dashboards/smartchime_panel.yaml](dashboards/smartchime_panel.yaml) and replace each entity in the table at its top with your own.
 2. **Settings → Dashboards → Add dashboard → New dashboard from scratch**, named Smartchime, not shown in the sidebar.
 3. Open it, choose **Edit dashboard → ⋮ → Raw configuration editor**, and paste.
-4. In browser_mod, for the Panel's browser, turn on **Kiosk mode** and **Hide header**, and set its default dashboard to the Smartchime dashboard.
+4. With the Panel running, register its browser in browser_mod (**Browser Mod** in the sidebar, then **Register**). For that browser, turn on **Kiosk mode** and **Hide header**, and set its default dashboard to the Smartchime dashboard.
+5. Back in the Panel Mode automation, set **Touch** to the browser's activity binary sensor: `binary_sensor.<browser id>`, such as `binary_sensor.smartchime`, not one of the `binary_sensor.<browser id>_browser_*` sensors. Without it the Panel still wakes for the doorbell, a person, a Hazard and Morning, but not for a touch.
 
 ## Development
 
