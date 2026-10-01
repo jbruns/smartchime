@@ -43,7 +43,7 @@ Copy [themes/smartchime_amoled.yaml](themes/smartchime_amoled.yaml) into your th
 
 1. Copy [dashboards/smartchime_panel.yaml](dashboards/smartchime_panel.yaml) and replace each entity in the table at its top with your own.
 2. **Settings → Dashboards → Add dashboard → New dashboard from scratch**, named Smartchime, not shown in the sidebar.
-3. Open it, choose **Edit dashboard → ⋮ → Raw configuration editor**, and paste.
+3. Open it, choose **Edit dashboard → ⋮ → Raw configuration editor**, and paste. Each mode is laid out to fill one 960×540 screen, which is the AMOLED at the 2× scale `smartchime-update` gives the kiosk.
 4. With the Panel running, register its browser in browser_mod (**Browser Mod** in the sidebar, then **Register**). For that browser, turn on **Kiosk mode** and **Hide header**, and set its default dashboard to the Smartchime dashboard.
 5. Back in the Panel Mode automation, set **Touch** to the browser's activity binary sensor: `binary_sensor.<browser id>`, such as `binary_sensor.smartchime`, not one of the `binary_sensor.<browser id>_browser_*` sensors. Without it the Panel still wakes for the doorbell, a person, a Hazard and Morning, but not for a touch.
 

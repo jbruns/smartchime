@@ -4,7 +4,8 @@
 #   sudo smartchime-update          converge the host, then deploy the latest vX.Y.Z tag
 #   sudo smartchime-update --os     converge the host, then upgrade the held kernel/firmware packages
 #
-# Every run converges: uv, the venv, APT holds, dietpi.txt update policy and the systemd unit.
+# Every run converges: uv, the venv, APT holds, dietpi.txt update policy, the systemd unit and the
+# Panel's Chromium scale.
 # See docs/adr/0003-os-updates-apt-auto-applies-kernel-firmware-held.md.
 #
 # Everything lives in functions and main is called on the last line, so checking out a new tag
@@ -19,6 +20,7 @@ UV="$APP_HOME/.local/bin/uv"
 DIETPI_TXT="${SMARTCHIME_DIETPI_TXT:-/boot/dietpi.txt}"
 UNIT_PATH="${SMARTCHIME_UNIT:-/etc/systemd/system/smartchime.service}"
 BIN_LINK="${SMARTCHIME_BIN_LINK:-/usr/local/bin/smartchime-update}"
+CHROMIUM_FLAGS_FILE="${SMARTCHIME_CHROMIUM_FLAGS:-/etc/chromium.d/smartchime}"
 REBOOT_REQUIRED="${SMARTCHIME_REBOOT_REQUIRED:-/run/reboot-required}"
 # A kernel or firmware update can break the HifiBerry, KMS or the kiosk, so these only move with --os.
 HELD_PACKAGES=(linux-image-rpi-v8 raspi-firmware rpi-eeprom)
@@ -109,6 +111,23 @@ install_unit() {
 # Link the command into PATH; the link follows whichever tag is checked out.
 install_command() {
     ln -sfn "$APP_DIR/scripts/smartchime-update" "$BIN_LINK"
+}
+
+chromium_flags() {
+    cat <<'EOF'
+# Smartchime: render the Panel at 2x, so the 1920x1080 AMOLED is a 960x540 CSS px page.
+export CHROMIUM_FLAGS="$CHROMIUM_FLAGS --force-device-scale-factor=2"
+EOF
+}
+
+# /usr/bin/chromium sources every file in /etc/chromium.d; Chromium reads flags only at launch.
+install_chromium_flags() {
+    if [ -f "$CHROMIUM_FLAGS_FILE" ] && [ "$(cat "$CHROMIUM_FLAGS_FILE")" = "$(chromium_flags)" ]; then
+        return 0
+    fi
+    log "Installing $CHROMIUM_FLAGS_FILE; restart the kiosk (or reboot) to apply it"
+    mkdir -p "${CHROMIUM_FLAGS_FILE%/*}"
+    chromium_flags > "$CHROMIUM_FLAGS_FILE"
 }
 
 latest_tag() {
@@ -244,6 +263,7 @@ converge() {
     set_dietpi_option CONFIG_CHECK_DIETPI_UPDATES 1
     install_unit
     install_command
+    install_chromium_flags
 }
 
 main() {

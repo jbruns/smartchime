@@ -1,7 +1,10 @@
-# Smartchime Panel: the dashboard on Smartchime's AMOLED screen (1920x1080, landscape).
+# Smartchime Panel: the dashboard on Smartchime's 5.5" AMOLED screen. Chromium renders it
+# at 2x, so the 1920x1080 screen is a 960x540 CSS px page.
 #
 # It shows whichever Panel Mode the "Smartchime: Panel Mode" automation has
 # selected. Sleep shows nothing: the smartchime_amoled theme makes it black.
+# Every mode fills exactly one screen and never scrolls. Moving between modes
+# is the small icon in the top-right corner.
 #
 # Before pasting this into a new dashboard's raw configuration editor, replace
 # each entity below with your own (find and replace):
@@ -11,7 +14,7 @@
 #   binary_sensor.smartchime_hazard          Hazard group helper (smoke, CO and leak sensors)
 #   binary_sensor.smartchime_open_doors      Open Doors group helper (door and window contact sensors)
 #   camera.front_door                        Front door camera (Visitor and Person)
-#   lock.front_door                          Front door lock
+#   lock.front_door                          Front door lock (Idle status line, Visitor, Person and Controls)
 #   lock.side_door                           Another lock (Controls)
 #   light.porch                              Porch light (Visitor, Person and Controls)
 #   light.entry                              Another light (Controls)
@@ -31,7 +34,7 @@ views:
     cards:
       - type: vertical-stack
         cards:
-          # ── Idle: the time, the doors and the weather ──────────────────
+          # ── Idle: the time, the weather and a status line ──────────────
           - type: conditional
             conditions:
               - condition: state
@@ -39,45 +42,15 @@ views:
                 state: idle
             card:
               type: vertical-stack
+              card_mod:
+                style: |
+                  :host { display: block !important; position: relative !important; height: 100vh !important; overflow: hidden !important; }
+                  #root { height: 100% !important; box-sizing: border-box !important; padding: 16px 24px 12px !important; }
+                  #root > :nth-child(2) { flex: 1 !important; min-height: 0 !important; display: flex !important; flex-direction: column !important; justify-content: center !important; }
               cards:
-                - type: horizontal-stack
-                  cards:
-                    - type: vertical-stack
-                      cards:
-                        - type: clock
-                          clock_size: large
-                          time_format: "12"
-                          show_seconds: false
-                        - type: markdown
-                          text_only: true
-                          content: >-
-                            {% set hazards = expand('binary_sensor.smartchime_hazard')
-                              | selectattr('state', 'eq', 'on') | map(attribute='name') | list %}
-                            {% set open = expand('binary_sensor.smartchime_open_doors')
-                              | selectattr('state', 'eq', 'on') | map(attribute='name') | list %}
-                            {% if hazards %}<ha-alert alert-type="error">{{ hazards | join(', ') }}</ha-alert>
-                            {% endif %}{% if open %}<ha-alert alert-type="warning">Open: {{ open | join(', ') }}</ha-alert>
-                            {% elif not hazards %}<ha-alert alert-type="success">All doors closed</ha-alert>{% endif %}
-                        - type: tile
-                          entity: lock.front_door
-                          vertical: false
-                          tap_action:
-                            action: toggle
-                    - type: vertical-stack
-                      cards:
-                        - type: weather-forecast
-                          entity: weather.home
-                          show_current: true
-                          show_forecast: true
-                          forecast_type: daily
-                        - type: tile
-                          entity: sensor.outdoor_aqi
-                          name: Air quality
-                          icon: mdi:weather-hazy
-                - type: button
-                  name: Controls
+                - type: heading
+                  heading: ""
                   icon: mdi:tune-variant
-                  show_state: false
                   tap_action:
                     action: perform-action
                     perform_action: input_select.select_option
@@ -85,6 +58,68 @@ views:
                       entity_id: input_select.smartchime_panel_mode
                     data:
                       option: controls
+                  card_mod:
+                    style: |
+                      :host { position: absolute !important; top: 4px !important; right: 4px !important; z-index: 1 !important; }
+                      .title { padding: 10px !important; }
+                      .title ha-icon { --mdc-icon-size: 28px !important; }
+                      ha-icon-next { display: none !important; }
+                - type: horizontal-stack
+                  card_mod:
+                    style: |
+                      #root { align-items: center !important; }
+                  cards:
+                    - type: vertical-stack
+                      cards:
+                        - type: clock
+                          clock_size: large
+                          time_format: "12"
+                          show_seconds: false
+                          card_mod:
+                            style:
+                              hui-clock-card-digital $: |
+                                .time-parts { font-size: 128px !important; line-height: 1 !important; }
+                        - type: markdown
+                          text_only: true
+                          content: "{{ now().strftime('%A, %B %-d') }}"
+                          card_mod:
+                            style: |
+                              ha-card { font-size: 30px !important; padding: 8px 0 0 !important; text-align: center !important; }
+                    - type: vertical-stack
+                      cards:
+                        - type: weather-forecast
+                          entity: weather.home
+                          show_current: true
+                          show_forecast: true
+                          forecast_type: daily
+                          forecast_slots: 4
+                          card_mod:
+                            style: |
+                              .name { display: none !important; }
+                        - type: markdown
+                          text_only: true
+                          content: "Air quality {{ states('sensor.outdoor_aqi') | float(0) | round(0) | int }}"
+                          card_mod:
+                            style: |
+                              ha-card { color: var(--secondary-text-color) !important; font-size: 20px !important; padding: 0 16px !important; }
+                - type: markdown
+                  text_only: true
+                  content: >-
+                    {% set hazards = expand('binary_sensor.smartchime_hazard')
+                      | selectattr('state', 'eq', 'on') | map(attribute='name') | list %}
+                    {% set open = expand('binary_sensor.smartchime_open_doors')
+                      | selectattr('state', 'eq', 'on') | map(attribute='name') | list %}
+                    {% set lock = states('lock.front_door') %}
+                    {% set parts = [] %}
+                    {% if hazards %}{% set parts = parts + ['<font color="#ff5252">' ~ hazards | join(', ') ~ '</font>'] %}{% endif %}
+                    {% if open %}{% set parts = parts + ['<font color="#ffb300">Open: ' ~ open | join(', ') ~ '</font>'] %}
+                    {% else %}{% set parts = parts + ['All doors closed'] %}{% endif %}
+                    {% if lock == 'locked' %}{% set parts = parts + ['Front door locked'] %}
+                    {% else %}{% set parts = parts + ['<font color="#ffb300">Front door ' ~ lock | replace('_', ' ') ~ '</font>'] %}{% endif %}
+                    {{ parts | join(' · ') }}
+                  card_mod:
+                    style: |
+                      ha-card { color: var(--secondary-text-color) !important; font-size: 22px !important; padding: 0 16px !important; }
 
           # ── Visitor and Person: the front door camera ──────────────────
           - type: conditional
@@ -99,41 +134,74 @@ views:
                     state: person
             card:
               type: horizontal-stack
+              card_mod:
+                style: |
+                  :host { display: block !important; position: relative !important; height: 100vh !important; overflow: hidden !important; }
+                  #root { height: 100% !important; align-items: center !important; }
+                  #root > :nth-child(1) { flex: 7 1 0 !important; min-width: 0 !important; }
+                  #root > :nth-child(2) { flex: 3 1 0 !important; min-width: 0 !important; align-self: stretch !important; }
               cards:
                 - type: custom:advanced-camera-card
                   cameras:
                     - camera_entity: camera.front_door
                   menu:
                     style: none
+                  status_bar:
+                    style: none
+                  live:
+                    controls:
+                      next_previous:
+                        style: none
+                      thumbnails:
+                        mode: none
+                      ptz:
+                        mode: "off"
                 - type: vertical-stack
+                  card_mod:
+                    style: |
+                      :host { display: block !important; height: 100% !important; }
+                      #root { height: 100% !important; box-sizing: border-box !important; padding: 8px 12px !important; justify-content: center !important; }
                   cards:
                     - type: markdown
                       text_only: true
                       content: >-
                         {% if is_state('input_select.smartchime_panel_mode', 'visitor') %}
-                        # Someone's at the door
+                        ## At the door
                         {% else %}
-                        # Someone's outside
+                        ## Outside
                         {% endif %}
                     - type: tile
                       entity: lock.front_door
+                      vertical: true
                       tap_action:
                         action: toggle
+                      card_mod:
+                        style: |
+                          ha-card { background: #141414 !important; height: 150px !important; justify-content: center !important; }
                     - type: tile
                       entity: light.porch
+                      vertical: true
                       tap_action:
                         action: toggle
-                    - type: button
-                      name: Dismiss
-                      icon: mdi:close
-                      show_state: false
-                      tap_action:
-                        action: perform-action
-                        perform_action: input_select.select_option
-                        target:
-                          entity_id: input_select.smartchime_panel_mode
-                        data:
-                          option: idle
+                      card_mod:
+                        style: |
+                          ha-card { background: #141414 !important; height: 150px !important; justify-content: center !important; }
+                - type: heading
+                  heading: ""
+                  icon: mdi:close
+                  tap_action:
+                    action: perform-action
+                    perform_action: input_select.select_option
+                    target:
+                      entity_id: input_select.smartchime_panel_mode
+                    data:
+                      option: idle
+                  card_mod:
+                    style: |
+                      :host { position: absolute !important; top: 4px !important; right: 4px !important; z-index: 1 !important; }
+                      .title { padding: 10px !important; }
+                      .title ha-icon { --mdc-icon-size: 28px !important; }
+                      ha-icon-next { display: none !important; }
 
           # ── Hazard: takes over until it clears or is acknowledged ──────
           - type: conditional
@@ -143,6 +211,11 @@ views:
                 state: hazard
             card:
               type: vertical-stack
+              card_mod:
+                style: |
+                  :host { display: block !important; position: relative !important; height: 100vh !important; overflow: hidden !important; background: #8b0000 !important; }
+                  #root { height: 100% !important; box-sizing: border-box !important; padding: 16px !important; }
+                  #root > :nth-child(1) { flex: 1 !important; min-height: 0 !important; display: flex !important; flex-direction: column !important; justify-content: center !important; }
               cards:
                 - type: markdown
                   content: >-
@@ -154,17 +227,12 @@ views:
                     {% endfor %}
                   card_mod:
                     style: |
-                      ha-card {
-                        background: #8b0000;
-                        color: #ffffff;
-                        text-align: center;
-                        min-height: 70vh;
-                        font-size: 2em;
-                      }
-                - type: button
+                      ha-card { background: transparent !important; color: #ffffff !important; text-align: center !important; font-size: 2em !important; }
+                - type: tile
+                  entity: input_select.smartchime_panel_mode
                   name: Acknowledge
                   icon: mdi:check
-                  show_state: false
+                  hide_state: true
                   tap_action:
                     action: perform-action
                     perform_action: input_select.select_option
@@ -172,6 +240,17 @@ views:
                       entity_id: input_select.smartchime_panel_mode
                     data:
                       option: idle
+                  icon_tap_action:
+                    action: perform-action
+                    perform_action: input_select.select_option
+                    target:
+                      entity_id: input_select.smartchime_panel_mode
+                    data:
+                      option: idle
+                  card_mod:
+                    style: |
+                      ha-card { background: rgba(255, 255, 255, 0.18) !important; height: 88px !important; justify-content: center !important; }
+                      .name, .primary { font-size: 28px !important; }
 
           # ── Controls: locks, lights and the garage ─────────────────────
           - type: conditional
@@ -181,35 +260,15 @@ views:
                 state: controls
             card:
               type: vertical-stack
+              card_mod:
+                style: |
+                  :host { display: block !important; position: relative !important; height: 100vh !important; overflow: hidden !important; }
+                  #root { height: 100% !important; box-sizing: border-box !important; padding: 56px 24px 24px !important; }
+                  #root > :nth-child(2) { flex: 1 !important; min-height: 0 !important; }
               cards:
-                - type: grid
-                  columns: 3
-                  square: false
-                  cards:
-                    - type: tile
-                      entity: lock.front_door
-                      features:
-                        - type: lock-commands
-                    - type: tile
-                      entity: lock.side_door
-                      features:
-                        - type: lock-commands
-                    - type: tile
-                      entity: cover.garage_door
-                      features:
-                        - type: cover-open-close
-                    - type: tile
-                      entity: light.porch
-                      tap_action:
-                        action: toggle
-                    - type: tile
-                      entity: light.entry
-                      tap_action:
-                        action: toggle
-                - type: button
-                  name: Back
+                - type: heading
+                  heading: ""
                   icon: mdi:arrow-left
-                  show_state: false
                   tap_action:
                     action: perform-action
                     perform_action: input_select.select_option
@@ -217,3 +276,52 @@ views:
                       entity_id: input_select.smartchime_panel_mode
                     data:
                       option: idle
+                  card_mod:
+                    style: |
+                      :host { position: absolute !important; top: 4px !important; right: 4px !important; z-index: 1 !important; }
+                      .title { padding: 10px !important; }
+                      .title ha-icon { --mdc-icon-size: 28px !important; }
+                      ha-icon-next { display: none !important; }
+                - type: grid
+                  columns: 3
+                  square: false
+                  card_mod:
+                    style: |
+                      :host { display: block !important; height: 100% !important; }
+                      #root { height: 100% !important; grid-auto-rows: 1fr !important; }
+                  cards:
+                    - type: tile
+                      entity: lock.front_door
+                      features:
+                        - type: lock-commands
+                      card_mod:
+                        style: |
+                          ha-card { background: #141414 !important; height: 100% !important; justify-content: center !important; }
+                    - type: tile
+                      entity: lock.side_door
+                      features:
+                        - type: lock-commands
+                      card_mod:
+                        style: |
+                          ha-card { background: #141414 !important; height: 100% !important; justify-content: center !important; }
+                    - type: tile
+                      entity: cover.garage_door
+                      features:
+                        - type: cover-open-close
+                      card_mod:
+                        style: |
+                          ha-card { background: #141414 !important; height: 100% !important; justify-content: center !important; }
+                    - type: tile
+                      entity: light.porch
+                      tap_action:
+                        action: toggle
+                      card_mod:
+                        style: |
+                          ha-card { background: #141414 !important; height: 100% !important; justify-content: center !important; }
+                    - type: tile
+                      entity: light.entry
+                      tap_action:
+                        action: toggle
+                      card_mod:
+                        style: |
+                          ha-card { background: #141414 !important; height: 100% !important; justify-content: center !important; }

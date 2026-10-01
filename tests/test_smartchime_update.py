@@ -96,6 +96,7 @@ class Host:
         self.unit = root / "etc" / "smartchime.service"
         self.dietpi_txt = root / "boot" / "dietpi.txt"
         self.bin_link = root / "usr" / "local" / "bin" / "smartchime-update"
+        self.chromium_flags = root / "etc" / "chromium.d" / "smartchime"
         for d in (self.origin, self.home, self.state, self.bin, self.stubs, self.unit.parent, self.dietpi_txt.parent):
             d.mkdir(parents=True)
         self.bin_link.parent.mkdir(parents=True)
@@ -115,6 +116,7 @@ class Host:
             "SMARTCHIME_UNIT": str(self.unit),
             "SMARTCHIME_DIETPI_TXT": str(self.dietpi_txt),
             "SMARTCHIME_BIN_LINK": str(self.bin_link),
+            "SMARTCHIME_CHROMIUM_FLAGS": str(self.chromium_flags),
             "SMARTCHIME_REBOOT_REQUIRED": str(root / "run" / "reboot-required"),
         }
         for name, body in STUBS.items():
@@ -370,6 +372,31 @@ def test_installs_the_unit_and_the_smartchime_update_command(host: Host):
 
     assert host.unit.read_text() == _expected_unit(host)
     assert host.bin_link.resolve() == (host.app / "scripts" / "smartchime-update").resolve()
+
+
+def _chromium_flags(host: Host) -> str:
+    """CHROMIUM_FLAGS after sourcing the installed file the way /usr/bin/chromium does."""
+    script = f'CHROMIUM_FLAGS="--kiosk"; . "{host.chromium_flags}"; echo "$CHROMIUM_FLAGS"'
+    return subprocess.run(["sh", "-c", script], capture_output=True, text=True, check=True).stdout.strip()
+
+
+def test_renders_the_panel_at_twice_the_scale(host: Host):
+    result = host.run()
+
+    assert result.returncode == 0, result.stderr
+    assert _chromium_flags(host) == "--kiosk --force-device-scale-factor=2"
+    assert "restart the kiosk" in result.stdout
+
+
+def test_replaces_outdated_chromium_flags_and_leaves_current_ones_alone(host: Host):
+    host.chromium_flags.parent.mkdir(parents=True)
+    host.chromium_flags.write_text('export CHROMIUM_FLAGS="$CHROMIUM_FLAGS --force-device-scale-factor=3"\n')
+    host.run()
+    assert _chromium_flags(host) == "--kiosk --force-device-scale-factor=2"
+
+    result = host.run()
+
+    assert "restart the kiosk" not in result.stdout
 
 
 def test_os_upgrades_the_held_packages_rehold_them_and_reports_a_reboot(host: Host):

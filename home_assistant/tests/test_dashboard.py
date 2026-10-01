@@ -51,10 +51,27 @@ def test_every_awake_mode_has_exactly_one_card_and_sleep_shows_nothing() -> None
 
 def test_buttons_only_select_real_modes() -> None:
     for card in cards(dashboard()):
-        action = card.get("tap_action", {})
-        if action.get("perform_action") == "input_select.select_option":
-            assert action["target"]["entity_id"] == PANEL_MODE
-            assert action["data"]["option"] in MODES
+        for key in ("tap_action", "icon_tap_action"):
+            action = card.get(key, {})
+            if action.get("perform_action") == "input_select.select_option":
+                assert action["target"]["entity_id"] == PANEL_MODE
+                assert action["data"]["option"] in MODES
+
+
+def test_every_mode_fills_exactly_one_screen() -> None:
+    """Each mode's card is pinned to the viewport, so the Panel never scrolls."""
+    for card in cards(dashboard()):
+        if card["type"] == "conditional":
+            style = re.sub(r"\s+", " ", card["card"]["card_mod"]["style"])
+            host = re.search(r":host \{([^}]*)\}", style)
+            assert host, style
+            assert "height: 100vh !important" in host.group(1)
+            assert "overflow: hidden !important" in host.group(1)
+
+
+def test_no_button_cards() -> None:
+    """A button card's icon grows with its width, which is what pushed the Panel off the screen."""
+    assert not [card for card in cards(dashboard()) if card["type"] == "button"]
 
 
 def test_only_the_named_custom_cards_are_used() -> None:
