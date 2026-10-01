@@ -331,7 +331,7 @@ def test_holds_the_kernel_and_firmware_packages(host: Host):
 def test_sets_dietpi_to_auto_apply_apt_and_only_notify_of_dietpi_updates(host: Host):
     host.run()
 
-    assert host.dietpi_txt.read_text() == (
+    assert host.dietpi_txt.read_text().startswith(
         "AUTO_SETUP_AUTOMATED=1\nCONFIG_CHECK_DIETPI_UPDATES=1\nCONFIG_CHECK_APT_UPDATES=2\nCONFIG_NTP_MODE=2\n"
     )
 
@@ -380,11 +380,30 @@ def _chromium_flags(host: Host) -> str:
     return subprocess.run(["sh", "-c", script], capture_output=True, text=True, check=True).stdout.strip()
 
 
+def _kiosk_window(host: Host) -> tuple[str, str]:
+    """The --window-size DietPi's chromium-autostart.sh reads from dietpi.txt."""
+    options = dict(line.split("=", 1) for line in host.dietpi_txt.read_text().splitlines() if "=" in line)
+    return options["SOFTWARE_CHROMIUM_RES_X"], options["SOFTWARE_CHROMIUM_RES_Y"]
+
+
 def test_renders_the_panel_at_twice_the_scale(host: Host):
     result = host.run()
 
     assert result.returncode == 0, result.stderr
     assert _chromium_flags(host) == "--kiosk --force-device-scale-factor=2"
+    # Chromium sizes its window in CSS px, so at 2x the 1920x1080 AMOLED is a 960x540 window.
+    assert _kiosk_window(host) == ("960", "540")
+    assert "restart the kiosk" in result.stdout
+
+
+def test_a_full_resolution_kiosk_window_alone_needs_a_kiosk_restart(host: Host):
+    host.run()
+    text = host.dietpi_txt.read_text()
+    host.dietpi_txt.write_text(text.replace("RES_X=960", "RES_X=1920").replace("RES_Y=540", "RES_Y=1080"))
+
+    result = host.run()
+
+    assert _kiosk_window(host) == ("960", "540")
     assert "restart the kiosk" in result.stdout
 
 

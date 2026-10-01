@@ -14,7 +14,7 @@ The system follows a manager pattern with `SmartchimeSystem` (in `src/smartchime
 - **`encoder_manager.py`** — Two rotary encoders via `gpiozero` (volume control and sound selection)
 - **`shairport_metadata.py`** — Reads AirPlay metadata from the shairport-sync named pipe in a background thread
 
-`scripts/smartchime-update` is the Pi's converging deploy script: it deploys the latest release tag with rollback and keeps uv, the APT holds, the `dietpi.txt` update policy, the systemd unit and the kiosk's 2× Chromium scale in place (`docs/adr/0003`). Its tests in `tests/test_smartchime_update.py` run it against a real git origin with the system commands stubbed.
+`scripts/smartchime-update` is the Pi's converging deploy script: it deploys the latest release tag with rollback and keeps uv, the APT holds, the `dietpi.txt` update policy, the systemd unit and the kiosk's 2× Chromium scale and 960×540 window in place (`docs/adr/0003`). Its tests in `tests/test_smartchime_update.py` run it against a real git origin with the system commands stubbed.
 
 All modules live in `src/smartchime/`. Configuration is loaded from `config.yaml` (copy `config.example.yaml` to create it). MQTT topics, GPIO pins, audio paths, and throttle timings are all config-driven.
 

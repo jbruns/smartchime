@@ -5,7 +5,7 @@
 #   sudo smartchime-update --os     converge the host, then upgrade the held kernel/firmware packages
 #
 # Every run converges: uv, the venv, APT holds, dietpi.txt update policy, the systemd unit and the
-# Panel's Chromium scale.
+# Panel kiosk's Chromium scale and window size.
 # See docs/adr/0003-os-updates-apt-auto-applies-kernel-firmware-held.md.
 #
 # Everything lives in functions and main is called on the last line, so checking out a new tag
@@ -62,7 +62,7 @@ hold_os_packages() {
     apt-mark hold "${HELD_PACKAGES[@]}" >/dev/null
 }
 
-# Set KEY=VALUE in dietpi.txt, where DietPi's daily cron job reads it.
+# Set KEY=VALUE in dietpi.txt, where DietPi's daily cron job and kiosk autostart read it.
 set_dietpi_option() {
     local key=$1 value=$2 tmp
     grep -Eq "^[[:blank:]]*${key}=${value}[[:blank:]]*$" "$DIETPI_TXT" && return 0
@@ -120,14 +120,27 @@ export CHROMIUM_FLAGS="$CHROMIUM_FLAGS --force-device-scale-factor=2"
 EOF
 }
 
-# /usr/bin/chromium sources every file in /etc/chromium.d; Chromium reads flags only at launch.
-install_chromium_flags() {
-    if [ -f "$CHROMIUM_FLAGS_FILE" ] && [ "$(cat "$CHROMIUM_FLAGS_FILE")" = "$(chromium_flags)" ]; then
-        return 0
+kiosk_config() {
+    cat "$CHROMIUM_FLAGS_FILE" 2>/dev/null || true
+    grep -E '^[[:blank:]]*SOFTWARE_CHROMIUM_RES_[XY]=' "$DIETPI_TXT" || true
+}
+
+# /usr/bin/chromium sources every file in /etc/chromium.d. DietPi's chromium-autostart.sh passes
+# --window-size from dietpi.txt after those flags, and Chromium reads it in CSS px, so at 2x the
+# 1920x1080 AMOLED is a 960x540 window. Chromium reads both only at launch.
+configure_kiosk() {
+    local before
+    before=$(kiosk_config)
+    if ! { [ -f "$CHROMIUM_FLAGS_FILE" ] && [ "$(cat "$CHROMIUM_FLAGS_FILE")" = "$(chromium_flags)" ]; }; then
+        log "Installing $CHROMIUM_FLAGS_FILE"
+        mkdir -p "${CHROMIUM_FLAGS_FILE%/*}"
+        chromium_flags > "$CHROMIUM_FLAGS_FILE"
     fi
-    log "Installing $CHROMIUM_FLAGS_FILE; restart the kiosk (or reboot) to apply it"
-    mkdir -p "${CHROMIUM_FLAGS_FILE%/*}"
-    chromium_flags > "$CHROMIUM_FLAGS_FILE"
+    set_dietpi_option SOFTWARE_CHROMIUM_RES_X 960
+    set_dietpi_option SOFTWARE_CHROMIUM_RES_Y 540
+    if [ "$(kiosk_config)" != "$before" ]; then
+        log "The kiosk's Chromium settings changed; restart the kiosk (or reboot) to apply them"
+    fi
 }
 
 latest_tag() {
@@ -263,7 +276,7 @@ converge() {
     set_dietpi_option CONFIG_CHECK_DIETPI_UPDATES 1
     install_unit
     install_command
-    install_chromium_flags
+    configure_kiosk
 }
 
 main() {

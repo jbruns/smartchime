@@ -117,7 +117,7 @@ Every run also converges the host, so it's safe to repeat:
 - installs uv to `~dietpi/.local/bin` (or runs `uv self update`), and replaces an old pip venv with a uv one
 - holds `linux-image-rpi-v8`, `raspi-firmware` and `rpi-eeprom`, and sets `/boot/dietpi.txt` to apply APT upgrades automatically and only notify of DietPi updates ([ADR 0003](docs/adr/0003-os-updates-apt-auto-applies-kernel-firmware-held.md))
 - installs or updates the `smartchime.service` unit, and links `/usr/local/bin/smartchime-update`
-- sets `/etc/chromium.d/smartchime` so the kiosk renders the Panel at 2× (960×540 CSS px); restart the kiosk or reboot after it changes
+- sets `/etc/chromium.d/smartchime` and the kiosk window in `/boot/dietpi.txt` (`SOFTWARE_CHROMIUM_RES_X/Y=960/540`, in CSS px) so the kiosk renders the Panel at 2×; restart the kiosk or reboot after it says they changed
 
 To apply the held kernel/firmware updates, run `sudo smartchime-update --os`. It tells you whether a reboot is required but doesn't reboot.
 
