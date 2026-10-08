@@ -50,8 +50,7 @@ def entity(hass: HomeAssistant, domain: str, unique_id: str) -> str:
 
 
 async def test_smartchime_is_one_device_reporting_its_release(hass: HomeAssistant, discovered: None) -> None:
-    device = dr.async_get(hass).async_get_device(identifiers={("mqtt", "smartchime")})
-    assert device is not None
+    [device] = dr.async_get(hass).async_get_devices(identifiers={("mqtt", "smartchime")})
     assert (device.name, device.sw_version) == ("Smartchime", "2.6.0")
     entities = er.async_entries_for_device(er.async_get(hass), device.id)
     assert sorted(e.domain for e in entities) == ["binary_sensor", "sensor", "update"]
